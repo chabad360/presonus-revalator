@@ -1,7 +1,10 @@
 [package]
-name = "presonus-revalator"
+name = "presonus_revalator"
 version = "0.1.0"
 edition = "2024"
+
+[workspace]
+members = [ "src/ui" ]
 
 [[bin]]
 name = "main"
@@ -15,5 +18,5 @@ path = "src/capture/main.rs"
 
 [dependencies]
 derive_more = {  version = "2.1.1", features = ["try_from"] }
-nusb = "0.2.4"
-pcap = "2.4.0"
+
+binrw = "0.15.1"
