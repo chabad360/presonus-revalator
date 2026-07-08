@@ -1,0 +1,118 @@
+use nusb::transfer::{Buffer, Bulk, ControlIn, ControlOut, ControlType, In, Out, Recipient};
+use nusb::{MaybeFuture, list_devices};
+
+use std::io::{Error, ErrorKind, Read, Write};
+use std::time::Duration;
+use presonus_revalator::protocol::payload::{Payload, PayloadType};
+use presonus_revalator::protocol::protocol::{build_message, parse_message, Body, Direction, Message, Target, Verb};
+
+fn main() {
+    test().unwrap();
+}
+
+fn test() -> Result<(), Error> {
+    let device = list_devices()
+        .wait()?
+        .find(|dev| dev.vendor_id() == 0x194f && dev.product_id() == 0x0422)
+        .ok_or(Error::new(ErrorKind::NotFound, "device not found"))?;
+
+    let device = device.open().wait()?;
+    let interface = device.detach_and_claim_interface(5).wait()?;
+    println!(
+        "Claimed interface: {:?}",
+        interface.descriptors().collect::<Vec<_>>()
+    );
+
+    interface.set_alt_setting(1).wait()?;
+
+    let m = Message {
+        // total_length: 0x28,
+        direction: Direction::OUT,
+        sequence_number: 0x00000001,
+        body: Some(Body {
+            verb: Verb::SetP,
+            object: Target::Appl,
+            payload: Payload {
+                payload_type: PayloadType::Para,
+                payload: &[0x0, 0x0, 0x0, 0x0, 0x4, 0x0, 0x0, 0x0, 0x0, 0x0, 0x80, 0x3f],
+            },
+        })
+    };
+
+    let out = build_message(m);
+    let mut out_buf = Buffer::new(out.len());
+    out_buf.extend_from_slice(&out);
+
+    let m = Message {
+        // total_length: 0xf0,
+        direction: Direction::OUT,
+        sequence_number: 0x00000002,
+        body: Some(Body {
+            verb: Verb::GetP,
+            object: Target::Appl,
+            payload: Payload {
+                payload_type: PayloadType::JaSt,
+                payload: &[
+                    0, 0, 0, 0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+                    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+                    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+                    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+                    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+                    0x80, 0x3f, 0x0, 0x0, 0x80, 0x3f, 0x0, 0x0, 0x80, 0x3f, 0x0, 0x0, 0x80, 0x3f, 0x0,
+                    0x0, 0x80, 0x3f, 0x0, 0x0, 0x80, 0x3f, 0x0, 0x0, 0x80, 0x3f, 0x0, 0x0, 0x80, 0x3f,
+                    0x0, 0x0, 0x80, 0x3f, 0x0, 0x0, 0x80, 0x3f, 0x0, 0x0, 0x80, 0x3f, 0x0, 0x0, 0x80,
+                    0x3f, 0x0, 0x0, 0x80, 0x3f, 0x0, 0x0, 0x80, 0x3f, 0x0, 0x0, 0x80, 0x3f, 0x0, 0x0,
+                    0x80, 0x3f, 0x0, 0x0, 0x80, 0x3f, 0x0, 0x0, 0x80, 0x3f, 0x0, 0x0, 0x0, 0x0, 0x0,
+                    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+                    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+                    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+                    0x0, 0x0, 0x0, 0x0, 0x0, 0x5a, 0x1,
+                ],
+            },
+        }),
+    };
+
+    let out2 = build_message(m);
+    let mut out_buf2 = Buffer::new(out2.len());
+    out_buf2.extend_from_slice(&out2);
+
+    let mut out_endpoint = interface.endpoint::<Bulk, Out>(0x01)?;
+    out_endpoint.submit(out_buf);
+    out_endpoint.submit(out_buf2);
+
+    let mut in_endpoint = interface.endpoint::<Bulk, In>(0x81)?;
+    let mut buf = Buffer::new(512);
+    let mut buf2 = Buffer::new(512);
+    in_endpoint.submit(buf);
+    in_endpoint.submit(buf2);
+
+    out_endpoint
+        .wait_next_complete(Duration::from_millis(100))
+        .and_then(|_| {
+            in_endpoint
+                .wait_next_complete(Duration::from_millis(100))
+                .map(|c| {
+                    println!("{:?}", &parse_message(&c.buffer.to_vec()));
+                    Some(c)
+                })
+        });
+
+    out_endpoint
+        .wait_next_complete(Duration::from_millis(100))
+        .and_then(|_| {
+            in_endpoint
+                .wait_next_complete(Duration::from_millis(100))
+                .map(|c| {
+                    println!("{:?}", &parse_message(&c.buffer.to_vec()));
+                    Some(c)
+                })
+        });
+
+    // let mut reader = interface.endpoint::<Bulk, In>(0x81)?.reader(304);
+    // let mut buf = [0; 304];
+    // reader.read_exact(&mut buf)?;
+    //
+    // println!("{:?}", parse_message(&buf.to_vec()));
+
+    Ok(())
+}

@@ -1,0 +1,19 @@
+[package]
+name = "presonus-revalator"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "main"
+path = "src/main.rs"
+
+[[bin]]
+name = "capture"
+path = "src/capture/main.rs"
+
+[lib]
+
+[dependencies]
+derive_more = {  version = "2.1.1", features = ["try_from"] }
+nusb = "0.2.4"
+pcap = "2.4.0"
