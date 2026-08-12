@@ -1,6 +1,6 @@
 use binrw::{BinRead, BinWrite};
 
-#[derive(Debug, Clone, Copy, BinRead, BinWrite)]
+#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
 pub enum Payload {
     #[brw(
         magic = b"tSaJ\xdc\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\xe1\x01"
@@ -20,7 +20,7 @@ pub enum Payload {
     None,
 }
 
-#[derive(Debug, Clone, Copy, BinRead, BinWrite)]
+#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
 pub struct JaSt {
     pub playback_left: f32,  // payload[0] dBFS
     pub playback_right: f32, // payload[1] dBFS

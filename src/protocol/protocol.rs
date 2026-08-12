@@ -1,4 +1,4 @@
-use super::payload::Payload;
+pub use super::payload::Payload;
 use binrw::{BinRead, BinResult, BinWrite, Endian, binwrite};
 use std::io::{Cursor, Seek, Write};
 

@@ -1,4 +1,4 @@
-use crate::device_state::{Command, Knob, Meter, ParameterValue, State};
+use crate::device_state::{Command, ParameterValue, State};
 use binrw::BinRead;
 use nusb::{MaybeFuture, list_devices};
 use pcap::Device;

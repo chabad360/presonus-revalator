@@ -6,17 +6,10 @@ edition = "2024"
 [workspace]
 members = [ "src/ui" ]
 
-[[bin]]
-name = "main"
-path = "src/main.rs"
-
-[[bin]]
-name = "capture"
-path = "src/capture/main.rs"
-
 [lib]
 
 [dependencies]
 derive_more = {  version = "2.1.1", features = ["try_from"] }
 
 binrw = "0.15.1"
+anyhow = "1.0.104"

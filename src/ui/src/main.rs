@@ -11,15 +11,17 @@ pub mod device_usbmon;
 
 #[cfg(feature = "usbmon")]
 use device_usbmon as device;
-use std::collections::HashMap;
 
 #[cfg(feature = "real")]
 pub mod device;
 
+pub mod state;
+
 use crate::device_state::Command::Set;
-use crate::device_state::{Channel, ParameterValue, State, device_model};
-use eframe::egui::{Slider, Ui};
+use crate::device_state::{BoolParameter, Channel, FloatParameter, Parameter, ParameterValue, State, device_model};
+use eframe::egui::Slider;
 use eframe::{Frame, egui};
+use enum_map::EnumMap;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -29,7 +31,22 @@ use std::time::Duration;
 fn main() -> eframe::Result {
     env_logger::init();
 
-    let (usb_events, usb_updates) = device::init_capture().unwrap();
+    // let (usb_events, usb_updates) = device::init_capture();
+    let init = device::init_capture();
+    if let Err(err) = init {
+        return eframe::run_simple_native(
+            "Presonus Revalator",
+            Default::default(),
+            move |ctx, _frame| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.label(format!("Error initializing device: {err:?}"));
+                    if ui.button("Exit").clicked() {
+                        std::process::exit(1);
+                    }
+                });
+            });
+    }
+    let (usb_events, usb_updates) = init.unwrap();
 
     eframe::run_native(
         "Presonus Revalator",
@@ -63,19 +80,26 @@ fn channel(
         ui.label(channel.name);
         ui.horizontal(|ui| {
             (channel).parameters.iter().for_each(|param| match param {
-                device_state::Parameter::Meter(meter) => {
-                    let value = device_state.meters.get(meter.id).copied().unwrap_or(0.0);
-                    ui.add(egui::ProgressBar::new(value));
-                    // ui.add()
-                }
-                device_state::Parameter::Button(button) => {
-                    let value = device_state
-                        .buttons
-                        .get(button.id)
-                        .copied()
-                        .unwrap_or(false);
+                Parameter::Knob(float_param, label) => {
+                    let param_spec = float_param.spec();
                     if ui
-                        .add(egui::Button::new(button.label).fill(if value {
+                        .add(Slider::new(&mut device_state.floats[*float_param], param_spec.min..=param_spec.max))
+                        .changed()
+                    {
+                        sender
+                            .send(Set(ParameterValue::Float(*float_param, device_state.floats[*float_param])))
+                            .unwrap();
+                    }
+                }
+                Parameter::Meter(float_param, label) => {
+                    let param_spec = float_param.spec();
+                    ui.add(egui::ProgressBar::new(device_state.floats[*float_param]));
+                }
+                Parameter::Button(bool_param, label) => {
+                    let param_spec = bool_param.spec();
+                    let value = device_state.bools[*bool_param];
+                    if ui
+                        .add(egui::Button::new(*label).fill(if value {
                             egui::Color32::RED
                         } else {
                             egui::Color32::GRAY
@@ -83,19 +107,7 @@ fn channel(
                         .clicked()
                     {
                         sender
-                            .send(Set(ParameterValue::Button(button.clone(), !value)))
-                            .unwrap();
-                    }
-                }
-                device_state::Parameter::Knob(knob) => {
-                    let mut value = device_state.knobs.get(knob.id).copied().unwrap_or(0.0);
-                    if ui
-                        // .add(Knob::pan(&mut value).range(knob.range.clone()))
-                        .add(Slider::new(&mut value, knob.range.clone()))
-                        .changed()
-                    {
-                        sender
-                            .send(Set(ParameterValue::Knob(knob.clone(), value)))
+                            .send(Set(ParameterValue::Bool(*bool_param, !value)))
                             .unwrap();
                     }
                 }
@@ -106,9 +118,8 @@ fn channel(
 
 #[derive(Debug, Clone, Default)]
 struct DeviceState {
-    meters: HashMap<&'static str, f32>,
-    buttons: HashMap<&'static str, bool>,
-    knobs: HashMap<&'static str, f32>,
+    floats: EnumMap<FloatParameter, f32>,
+    bools: EnumMap<BoolParameter, bool>,
 }
 
 struct App {
@@ -119,33 +130,24 @@ struct App {
     device_state: DeviceState,
 }
 
+fn update_param(state: &mut DeviceState, param: ParameterValue) {
+    match param {
+        ParameterValue::Float(float_param, value) => {
+            state.floats[float_param] = value;
+        }
+        ParameterValue::Bool(bool_param, value) => {
+            state.bools[bool_param] = value;
+        }
+    }
+}
+
 fn drain_usb_events(rx: &std::sync::mpsc::Receiver<State>, state: &mut DeviceState) {
     while let Ok(event) = rx.try_recv() {
         match event {
-            State::Update(param) => match param {
-                device_state::ParameterValue::Meter(meter, value) => {
-                    state.meters.insert(meter.id, value);
-                }
-                device_state::ParameterValue::Button(button, value) => {
-                    state.buttons.insert(button.id, value);
-                }
-                device_state::ParameterValue::Knob(knob, value) => {
-                    state.knobs.insert(knob.id, value);
-                }
-            },
+            State::Update(param) => update_param(state, param),
             State::UpdateMany(params) => {
                 for param in params {
-                    match param {
-                        device_state::ParameterValue::Meter(meter, value) => {
-                            state.meters.insert(meter.id, value);
-                        }
-                        device_state::ParameterValue::Button(button, value) => {
-                            state.buttons.insert(button.id, value);
-                        }
-                        device_state::ParameterValue::Knob(knob, value) => {
-                            state.knobs.insert(knob.id, value);
-                        }
-                    }
+                    update_param(state, param);
                 }
             }
             State::None => {}

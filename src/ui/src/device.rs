@@ -1,4 +1,4 @@
-use crate::device_state::{Command, Knob, Meter, ParameterValue, State, device_model};
+use crate::device_state::{device_model, Command, FloatParameter, ParameterValue, State};
 use binrw::{BinRead, BinWrite};
 use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::{Bulk, In, Out};
@@ -10,6 +10,7 @@ use std::io::{Cursor, Error, ErrorKind, Read, Write};
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
+use anyhow::{Result, bail};
 
 fn write_msg(writer: &mut impl Write, msg: &Message) -> Result<(), Error> {
     let out = msg.to_bytes().map_err(Error::other)?;
@@ -61,19 +62,22 @@ pub fn init_capture() -> Result<(mpsc::Receiver<State>, mpsc::SyncSender<Command
         let mut buf = [0u8; 8];
 
         loop {
-            match process_command(update_rx.recv().unwrap(), nonce, &mut writer) {
-                Ok(_) => {}
+            match process_command(nonce, &mut update_rx, &mut writer) {
+                Ok(n) => {
+                    for _ in 0..n {
+                        match process_usb(event_tx.clone(), &mut reader, &mut buf) {
+                            Ok(()) => {}
+                            Err(e) => {
+                                eprintln!("Error processing USB: {:?}", e);
+                                reader = recover_reader(reader).unwrap()
+                            }
+                        }
+                    }
+                    nonce = nonce.wrapping_add(n as u8);
+                }
                 Err(e) => {
                     eprintln!("Error processing command: {:?}", e);
                     writer = recover_writer(writer).unwrap();
-                }
-            }
-            nonce = nonce.wrapping_add(1);
-            match process_usb(event_tx.clone(), &mut reader, &mut buf) {
-                Ok(()) => {}
-                Err(e) => {
-                    eprintln!("Error processing USB: {:?}", e);
-                    reader = recover_reader(reader).unwrap()
                 }
             }
         }
@@ -83,34 +87,42 @@ pub fn init_capture() -> Result<(mpsc::Receiver<State>, mpsc::SyncSender<Command
 }
 
 fn process_command(
-    cmd: Command,
     nonce: u8,
+    update_rx: &mut Receiver<Command>,
     mut writer: &mut EndpointWrite<Bulk>,
-) -> Result<(), ProcessError> {
-    match cmd {
-        Command::Refresh() => Ok(write_msg(
-            &mut writer,
-            &Message {
-                nonce,
-                body: Some(Body {
-                    verb: Verb::GetP,
-                    object: Target::Appl,
-                    payload: Payload::AskJaSt,
-                }),
-                ..Default::default()
-            },
-        )?),
-        Command::Set(param) => Ok(write_msg(&mut writer, &param_to_msg(nonce, param))?),
+) -> anyhow::Result<usize> {
+    match update_rx.recv()? {
+        Command::Refresh() => {
+            write_msg(
+                &mut writer,
+                &Message {
+                    nonce,
+                    body: Some(Body {
+                        verb: Verb::GetP,
+                        object: Target::Appl,
+                        payload: Payload::AskJaSt,
+                    }),
+                    ..Default::default()
+                },
+            )?;
+            Ok(1)
+        }
+        Command::Set(param) => {
+            write_msg(&mut writer, &param_to_msg(nonce, param))?;
+            Ok(1)
+        }
         Command::SetMany(params) => {
             let params = params
                 .iter()
-                .map(|p| param_to_msg(nonce, p.clone()))
+                .enumerate()
+                .map(|(i, p)| param_to_msg(nonce.wrapping_add(i as u8), p.clone()))
                 .collect::<Vec<_>>();
-            for param in params {
-                write_msg(&mut writer, &param)?;
+            for i in 0..params.len() {
+                write_msg(&mut writer, &params[i])?;
             }
-            Ok(())
+            Ok(params.len())
         }
+        _ => bail!("Unknown command"),
     }
 }
 
@@ -132,13 +144,13 @@ fn param_to_msg(nonce: u8, param: ParameterValue) -> Message {
         //     }
         //     m.body.as_mut().unwrap().payload.payload = &payload;
         // },
-        ParameterValue::Knob(knob, value) => {
-            match knob.id {
-                "gain_1" => {
+        ParameterValue::Float(float_param, value) => {
+            match float_param {
+                FloatParameter::Gain(channel) => {
                     payload = Payload::Para {
-                        channel: 0,
+                        channel: channel.into(),
                         parameter: 3,
-                        value: value,
+                        value,
                     }
                 }
                 _ => {}
@@ -159,7 +171,7 @@ fn process_usb(
     event_tx: Sender<State>,
     reader: &mut EndpointRead<Bulk>,
     buf: &mut [u8; 8],
-) -> Result<(), ProcessError> {
+) -> anyhow::Result<()> {
     reader.read_exact(buf)?;
     let total_length = u16::from_le_bytes([buf[0], buf[1]]);
     let mut message_buf = vec![0u8; total_length as usize];
@@ -174,20 +186,8 @@ fn process_usb(
         match body.payload {
             Payload::JaSt(payload) => {
                 event_tx.send(State::UpdateMany(vec![
-                    ParameterValue::Meter(
-                        Meter {
-                            id: "meter_1",
-                            range: 0.0..=1.0,
-                        },
-                        payload.channel_1,
-                    ),
-                    ParameterValue::Knob(
-                        Knob {
-                            id: "gain_1",
-                            range: 0.0..=1.0,
-                        },
-                        payload.channel_1_gain,
-                    ),
+                    ParameterValue::Float(FloatParameter::Meter(0), payload.channel_1),
+                    ParameterValue::Float(FloatParameter::Gain(0), payload.channel_1_gain),
                 ]))?;
             }
             _ => {
@@ -232,34 +232,3 @@ fn recover_writer(writer: EndpointWrite<Bulk>) -> io::Result<EndpointWrite<Bulk>
         .with_num_transfers(1))
 }
 
-#[derive(Debug)]
-enum ProcessError {
-    BinError(binrw::error::Error),
-    SendError(mpsc::SendError<State>),
-    RecvError(mpsc::TryRecvError),
-    IoError(Error),
-}
-
-impl From<binrw::error::Error> for ProcessError {
-    fn from(err: binrw::error::Error) -> Self {
-        ProcessError::BinError(err)
-    }
-}
-
-impl From<mpsc::SendError<State>> for ProcessError {
-    fn from(err: mpsc::SendError<State>) -> Self {
-        ProcessError::SendError(err)
-    }
-}
-
-impl From<io::Error> for ProcessError {
-    fn from(err: io::Error) -> Self {
-        ProcessError::IoError(err)
-    }
-}
-
-impl From<mpsc::TryRecvError> for ProcessError {
-    fn from(err: mpsc::TryRecvError) -> Self {
-        ProcessError::RecvError(err)
-    }
-}
