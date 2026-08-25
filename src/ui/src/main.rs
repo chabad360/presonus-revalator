@@ -18,7 +18,7 @@ pub mod device;
 pub mod state;
 
 use crate::device_state::Command::Set;
-use crate::device_state::{BoolParameter, Channel, FloatParameter, Parameter, ParameterValue, State, device_model};
+use crate::device_state::{device_model, BoolParameter, BoolParameters, Channel, FloatParameter, Parameter, ParameterValue, State, FloatParameters};
 use eframe::egui::Slider;
 use eframe::{Frame, egui};
 use enum_map::EnumMap;
@@ -118,8 +118,8 @@ fn channel(
 
 #[derive(Debug, Clone, Default)]
 struct DeviceState {
-    floats: EnumMap<FloatParameter, f32>,
-    bools: EnumMap<BoolParameter, bool>,
+    floats: EnumMap<FloatParameters, f32>,
+    bools: EnumMap<BoolParameters, bool>,
 }
 
 struct App {

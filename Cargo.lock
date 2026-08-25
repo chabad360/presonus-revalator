@@ -3379,6 +3379,7 @@ dependencies = [
  "enum-map",
  "env_logger",
  "nusb",
+ "paste",
  "pcap",
  "presonus_revalator",
 ]
