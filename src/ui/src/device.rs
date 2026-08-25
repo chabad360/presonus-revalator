@@ -6,7 +6,7 @@ use binrw::BinRead;
 use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::{Bulk, In, Out};
 use nusb::{MaybeFuture, list_devices};
-use presonus_revalator::protocol::payload::{ParaParameter, Payload};
+use presonus_revalator::protocol::payload::{ParaParameter, PariParameter, Payload};
 use presonus_revalator::protocol::protocol::{Body, Message, Target, Verb};
 use std::io;
 use std::io::{Cursor, Error, ErrorKind, Read, Write};
@@ -64,23 +64,35 @@ pub fn init_capture() -> Result<(mpsc::Receiver<State>, mpsc::SyncSender<Command
         let mut buf = [0u8; 8];
 
         loop {
-            match process_command(nonce, &mut update_rx, &mut writer) {
-                Ok(n) => {
-                    for _ in 0..n {
-                        match process_usb(event_tx.clone(), &mut reader, &mut buf) {
-                            Ok(()) => {}
-                            Err(e) => {
-                                eprintln!("Error processing USB: {:?}", e);
-                                reader = recover_reader(reader).unwrap()
-                            }
-                        }
-                    }
-                    nonce = nonce.wrapping_add(n as u8);
+            let messages = match next_messages(nonce, &mut update_rx) {
+                Ok(messages) => messages,
+                Err(error) => {
+                    eprintln!("Error processing command: {error:?}");
+                    continue;
                 }
-                Err(e) => {
-                    eprintln!("Error processing command: {:?}", e);
+            };
+
+            let mut messages = messages.into_iter().peekable();
+            while let Some(message) = messages.next() {
+                if let Err(error) = write_msg(&mut writer, &message) {
+                    eprintln!("Error writing USB message: {error:?}");
                     writer = recover_writer(writer).unwrap();
+                    break;
                 }
+
+                nonce = nonce.wrapping_add(1);
+
+                if let Err(error) = process_usb(event_tx.clone(), &mut reader, &mut buf) {
+                    eprintln!("Error processing USB: {error:?}");
+                    reader = recover_reader(reader).unwrap();
+                    break;
+                }
+
+                // if messages.peek().is_some() && is_channel_link_enable(&message) {
+                //     // The captured controller waits about 23 ms after enabling
+                //     // target 0 before sending the target-1 link update.
+                //     std::thread::sleep(Duration::from_millis(25));
+                // }
             }
         }
     });
@@ -88,43 +100,69 @@ pub fn init_capture() -> Result<(mpsc::Receiver<State>, mpsc::SyncSender<Command
     Ok((event_rx, update_tx))
 }
 
-fn process_command(
-    nonce: u8,
-    update_rx: &mut Receiver<Command>,
-    mut writer: &mut EndpointWrite<Bulk>,
-) -> anyhow::Result<usize> {
+// fn is_channel_link_enable(message: &Message) -> bool {
+//     matches!(
+//         message.body.as_ref().map(|body| body.payload),
+//         Some(Payload::Pari {
+//             data: PariParameter::ChannelLink { enabled: true },
+//             ..
+//         })
+//     )
+// }
+
+fn next_messages(nonce: u8, update_rx: &mut Receiver<Command>) -> anyhow::Result<Vec<Message>> {
     match update_rx.recv()? {
-        Command::Refresh() => {
-            write_msg(
-                &mut writer,
-                &Message {
-                    nonce,
-                    body: Some(Body {
-                        verb: Verb::GetP,
-                        object: Target::Appl,
-                        payload: Payload::AskJaSt,
-                    }),
-                    ..Default::default()
-                },
-            )?;
-            Ok(1)
-        }
-        Command::Set(param) => {
-            write_msg(&mut writer, &param_to_msg(nonce, param)?)?;
-            Ok(1)
-        }
+        Command::Refresh() => Ok(vec![Message {
+            nonce,
+            body: Some(Body {
+                verb: Verb::GetP,
+                object: Target::Appl,
+                payload: Payload::AskJaSt,
+            }),
+            ..Default::default()
+        }]),
+        Command::Set(param) => param_to_msgs(nonce, param),
         Command::SetMany(params) => {
-            let messages = params
-                .iter()
-                .enumerate()
-                .map(|(i, parameter)| param_to_msg(nonce.wrapping_add(i as u8), *parameter))
-                .collect::<Result<Vec<_>>>()?;
-            for message in &messages {
-                write_msg(&mut writer, message)?;
+            let mut messages = Vec::new();
+            for parameter in params {
+                let message_nonce = nonce.wrapping_add(messages.len() as u8);
+                messages.extend(param_to_msgs(message_nonce, parameter)?);
             }
-            Ok(messages.len())
+            Ok(messages)
         }
     }
+}
+
+fn param_to_msgs(nonce: u8, param: ParameterValue) -> Result<Vec<Message>> {
+    if let ParameterValue::Bool(BoolParameters::ChannelLink(), enabled) = param {
+        return Ok((0..=1)
+            .map(|channel| {
+                message(
+                    nonce.wrapping_add(channel as u8),
+                    Payload::Pari {
+                        channel,
+                        data: PariParameter::ChannelLink { enabled },
+                    },
+                )
+            })
+            .collect());
+    }
+
+    if let ParameterValue::Bool(BoolParameters::LinkedPresetEnabled(), enabled) = param {
+        return Ok((0..=1)
+            .map(|channel| {
+                message(
+                    nonce.wrapping_add(channel as u8),
+                    Payload::Para {
+                        channel,
+                        data: ParaParameter::Preset { enabled },
+                    },
+                )
+            })
+            .collect());
+    }
+
+    Ok(vec![param_to_msg(nonce, param)?])
 }
 
 fn param_to_msg(nonce: u8, param: ParameterValue) -> Result<Message> {
@@ -137,10 +175,18 @@ fn param_to_msg(nonce: u8, param: ParameterValue) -> Result<Message> {
             channel: channel.into(),
             data: ParaParameter::Preset { enabled },
         },
+        ParameterValue::Bool(BoolParameters::PhantomPower(channel), enabled) => Payload::Pari {
+            channel: channel.into(),
+            data: PariParameter::PhantomPower { enabled },
+        },
         unsupported => bail!("parameter is not writable: {unsupported:?}"),
     };
 
-    Ok(Message {
+    Ok(message(nonce, payload))
+}
+
+fn message(nonce: u8, payload: Payload) -> Message {
+    Message {
         nonce,
         body: Some(Body {
             verb: Verb::SetP,
@@ -148,7 +194,7 @@ fn param_to_msg(nonce: u8, param: ParameterValue) -> Result<Message> {
             payload,
         }),
         ..Message::default()
-    })
+    }
 }
 
 fn process_usb(
@@ -166,7 +212,7 @@ fn process_usb(
     }
 
     let msg = Message::read_le(&mut Cursor::new(message_buf))?;
-    if let Some(body) = msg.body {
+    if let Some(ref body) = msg.body {
         match body.payload {
             Payload::JaSt(payload) => {
                 event_tx.send(State::UpdateMany(jast_parameter_values(payload)))?;
@@ -218,21 +264,97 @@ mod tests {
     use super::*;
 
     #[test]
+    fn serializes_phantom_power_as_pari() {
+        for channel in 0..=1 {
+            let enabled = param_to_msg(
+                7,
+                ParameterValue::Bool(BoolParameters::PhantomPower(channel), true),
+            )
+                .unwrap()
+                .to_bytes()
+                .unwrap();
+            let disabled = param_to_msg(
+                7,
+                ParameterValue::Bool(BoolParameters::PhantomPower(channel), false),
+            )
+                .unwrap()
+                .to_bytes()
+                .unwrap();
+
+            assert_pari(&enabled, channel.into(), 0, 1);
+            assert_pari(&disabled, channel.into(), 0, 0);
+        }
+    }
+
+    #[test]
+    fn serializes_channel_link_for_both_targets() {
+        let messages =
+            param_to_msgs(7, ParameterValue::Bool(BoolParameters::ChannelLink(), true)).unwrap();
+        let bytes = messages
+            .iter()
+            .map(Message::to_bytes)
+            .collect::<binrw::BinResult<Vec<_>>>()
+            .unwrap();
+
+        assert_eq!(bytes.len(), 2);
+        assert_eq!(bytes[0][4], 7);
+        assert_eq!(bytes[1][4], 8);
+        assert_pari(&bytes[0], 0, 9, 1);
+        assert_pari(&bytes[1], 1, 9, 1);
+    }
+
+    #[test]
+    fn serializes_linked_preset_for_both_channels() {
+        let messages = param_to_msgs(
+            11,
+            ParameterValue::Bool(BoolParameters::LinkedPresetEnabled(), true),
+        )
+            .unwrap();
+        let bytes = messages
+            .iter()
+            .map(Message::to_bytes)
+            .collect::<binrw::BinResult<Vec<_>>>()
+            .unwrap();
+
+        assert_eq!(bytes.len(), 2);
+        for (channel, bytes) in bytes.iter().enumerate() {
+            assert_eq!(bytes[4], 11 + channel as u8);
+            assert_eq!(&bytes[20..24], b"araP");
+            assert_eq!(&bytes[28..32], &(channel as u32).to_le_bytes());
+            assert_eq!(&bytes[32..36], &4_u32.to_le_bytes());
+            assert_eq!(&bytes[36..40], &1.0_f32.to_le_bytes());
+        }
+    }
+
+    fn assert_pari(bytes: &[u8], target_index: u32, parameter_id: u32, value: u32) {
+        assert_eq!(&bytes[..2], &40_u16.to_le_bytes());
+        assert_eq!(&bytes[8..12], b"PteS");
+        assert_eq!(&bytes[12..16], b"lppA");
+        assert_eq!(&bytes[16..20], &0_u32.to_le_bytes());
+        assert_eq!(&bytes[20..24], b"iraP");
+        assert_eq!(&bytes[24..28], &20_u32.to_le_bytes());
+        assert_eq!(&bytes[28..32], &target_index.to_le_bytes());
+        assert_eq!(&bytes[32..36], &parameter_id.to_le_bytes());
+        assert_eq!(&bytes[36..40], &value.to_le_bytes());
+        assert_eq!(bytes.len(), 40);
+    }
+
+    #[test]
     fn serializes_preset_enable_and_disable_as_protocol_booleans() {
         let enabled = param_to_msg(
             7,
             ParameterValue::Bool(BoolParameters::PresetEnabled(1), true),
         )
-        .unwrap()
-        .to_bytes()
-        .unwrap();
+            .unwrap()
+            .to_bytes()
+            .unwrap();
         let disabled = param_to_msg(
             7,
             ParameterValue::Bool(BoolParameters::PresetEnabled(1), false),
         )
-        .unwrap()
-        .to_bytes()
-        .unwrap();
+            .unwrap()
+            .to_bytes()
+            .unwrap();
 
         assert_eq!(enabled.len(), disabled.len());
         assert_eq!(

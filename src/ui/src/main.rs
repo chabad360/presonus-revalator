@@ -113,9 +113,9 @@ fn parameter_group(
                         let value = device_state.uints[*uint_parameter];
                         ui.label(format!("{label}: {value:#010x}"));
                     }
-                    Parameter::BoolValue(bool_parameter, label) => {
+                    Parameter::Indicator(bool_parameter, label) => {
                         let value = device_state.bools[*bool_parameter];
-                        ui.label(format!("{label}: {}", if value { "on" } else { "off" }));
+                        ui.label(format!("{label}: {}", if value { "ON" } else { "OFF" }));
                     }
                     Parameter::Button(bool_parameter, label) => {
                         let value = device_state.bools[*bool_parameter];
@@ -206,7 +206,13 @@ impl eframe::App for App {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for group in &self.device_model.groups {
+                let channel_linked = self.device_state.bools[BoolParameters::ChannelLink()];
+                for group in self
+                    .device_model
+                    .groups
+                    .iter()
+                    .filter(|group| group.visibility.is_visible(channel_linked))
+                {
                     parameter_group(ui, &mut self.device_state, &self.usb_updates, group);
                     ui.add_space(4.0);
                 }

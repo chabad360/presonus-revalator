@@ -10,7 +10,25 @@ pub struct DeviceModel {
 #[derive(Debug, Clone)]
 pub struct ParameterGroup {
     pub name: &'static str,
+    pub visibility: ParameterGroupVisibility,
     pub parameters: Vec<Parameter>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParameterGroupVisibility {
+    Always,
+    Linked,
+    Unlinked,
+}
+
+impl ParameterGroupVisibility {
+    pub fn is_visible(self, channel_linked: bool) -> bool {
+        match self {
+            Self::Always => true,
+            Self::Linked => channel_linked,
+            Self::Unlinked => !channel_linked,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -106,8 +124,10 @@ float_parameters! {
 
 bool_parameters! {
     PresetEnabled(_channel: u8) {},
+    LinkedPresetEnabled() {},
     PhantomPower(_channel: u8) {},
-    StereoInput() {}
+    Clipping(_channel: u8) {},
+    ChannelLink() {}
 }
 
 u_int_parameters! {
@@ -129,7 +149,7 @@ pub enum Parameter {
     Meter(FloatParameters, &'static str),
     Value(FloatParameters, &'static str),
     UIntValue(UIntParameters, &'static str),
-    BoolValue(BoolParameters, &'static str),
+    Indicator(BoolParameters, &'static str),
     Button(BoolParameters, &'static str),
 }
 
@@ -138,10 +158,12 @@ pub fn device_model() -> DeviceModel {
         groups: vec![
             ParameterGroup {
                 name: "Channel 1",
+                visibility: ParameterGroupVisibility::Unlinked,
                 parameters: vec![
                     Parameter::UIntValue(UIntParameters::ActivityMask(0), "Activity mask"),
+                    Parameter::Indicator(BoolParameters::Clipping(0), "Clipping"),
                     Parameter::Button(BoolParameters::PresetEnabled(0), "Preset"),
-                    Parameter::BoolValue(BoolParameters::PhantomPower(0), "48 V"),
+                    Parameter::Button(BoolParameters::PhantomPower(0), "48 V"),
                     Parameter::Knob(FloatParameters::Gain(0), "Gain"),
                     Parameter::Meter(FloatParameters::ChannelLevel(0), "Level"),
                     Parameter::Meter(FloatParameters::Gate(0), "Gate"),
@@ -151,11 +173,13 @@ pub fn device_model() -> DeviceModel {
             },
             ParameterGroup {
                 name: "Channel 2",
+                visibility: ParameterGroupVisibility::Unlinked,
                 parameters: vec![
                     Parameter::UIntValue(UIntParameters::ActivityMask(1), "Activity mask"),
+                    Parameter::Indicator(BoolParameters::Clipping(1), "Clipping"),
                     Parameter::Button(BoolParameters::PresetEnabled(1), "Preset"),
-                    Parameter::BoolValue(BoolParameters::PhantomPower(1), "48 V"),
-                    Parameter::BoolValue(BoolParameters::StereoInput(), "Stereo input"),
+                    Parameter::Button(BoolParameters::PhantomPower(1), "48 V"),
+                    Parameter::Button(BoolParameters::ChannelLink(), "Channel link"),
                     Parameter::Knob(FloatParameters::Gain(1), "Gain"),
                     Parameter::Meter(FloatParameters::ChannelLevel(1), "Level"),
                     Parameter::Meter(FloatParameters::Channel2Side(0), "Left"),
@@ -165,11 +189,38 @@ pub fn device_model() -> DeviceModel {
                     Parameter::Meter(FloatParameters::Limiter(1), "Limiter"),
                 ],
             },
+            ParameterGroup {
+                name: "Channels 1+2 (linked)",
+                visibility: ParameterGroupVisibility::Linked,
+                parameters: vec![
+                    Parameter::UIntValue(UIntParameters::ActivityMask(0), "Activity 1"),
+                    Parameter::UIntValue(UIntParameters::ActivityMask(1), "Activity 2"),
+                    Parameter::Indicator(BoolParameters::Clipping(0), "Clipping 1"),
+                    Parameter::Indicator(BoolParameters::Clipping(1), "Clipping 2"),
+                    Parameter::Button(BoolParameters::LinkedPresetEnabled(), "Preset"),
+                    Parameter::Button(BoolParameters::PhantomPower(0), "48 V 1"),
+                    Parameter::Button(BoolParameters::PhantomPower(1), "48 V 2"),
+                    Parameter::Button(BoolParameters::ChannelLink(), "Channel link"),
+                    Parameter::Knob(FloatParameters::Gain(0), "Gain 1"),
+                    Parameter::Knob(FloatParameters::Gain(1), "Gain 2"),
+                    Parameter::Meter(FloatParameters::ChannelLevel(0), "Level 1"),
+                    Parameter::Meter(FloatParameters::ChannelLevel(1), "Level 2"),
+                    Parameter::Meter(FloatParameters::Channel2Side(0), "Left"),
+                    Parameter::Meter(FloatParameters::Channel2Side(1), "Right"),
+                    Parameter::Meter(FloatParameters::Gate(0), "Gate 1"),
+                    Parameter::Meter(FloatParameters::Gate(1), "Gate 2"),
+                    Parameter::Meter(FloatParameters::Compressor(0), "Compressor 1"),
+                    Parameter::Meter(FloatParameters::Compressor(1), "Compressor 2"),
+                    Parameter::Meter(FloatParameters::Limiter(0), "Limiter 1"),
+                    Parameter::Meter(FloatParameters::Limiter(1), "Limiter 2"),
+                ],
+            },
             stereo_meter_group("Playback", FloatParameters::Playback),
             stereo_meter_group("Virtual A", FloatParameters::VirtualA),
             stereo_meter_group("Virtual B", FloatParameters::VirtualB),
             ParameterGroup {
                 name: "Main",
+                visibility: ParameterGroupVisibility::Always,
                 parameters: vec![
                     Parameter::Meter(FloatParameters::Main(0), "Left"),
                     Parameter::Meter(FloatParameters::Main(1), "Right"),
@@ -180,6 +231,7 @@ pub fn device_model() -> DeviceModel {
             stereo_meter_group("Mix B", FloatParameters::MixB),
             ParameterGroup {
                 name: "Monitor",
+                visibility: ParameterGroupVisibility::Always,
                 parameters: vec![
                     Parameter::Value(FloatParameters::HeadphonesGain(), "Headphones gain"),
                     Parameter::Value(FloatParameters::MonitorMix(), "Monitor mix"),
@@ -187,6 +239,7 @@ pub fn device_model() -> DeviceModel {
             },
             ParameterGroup {
                 name: "Raw flags",
+                visibility: ParameterGroupVisibility::Always,
                 parameters: vec![
                     Parameter::UIntValue(UIntParameters::StatusFlags(0), "Status byte 0"),
                     Parameter::UIntValue(UIntParameters::StatusFlags(1), "Status byte 1"),
@@ -204,6 +257,7 @@ pub fn device_model() -> DeviceModel {
 fn stereo_meter_group(name: &'static str, parameter: fn(u8) -> FloatParameters) -> ParameterGroup {
     ParameterGroup {
         name,
+        visibility: ParameterGroupVisibility::Always,
         parameters: vec![
             Parameter::Meter(parameter(0), "Left"),
             Parameter::Meter(parameter(1), "Right"),
@@ -212,6 +266,12 @@ fn stereo_meter_group(name: &'static str, parameter: fn(u8) -> FloatParameters) 
 }
 
 pub fn jast_parameter_values(payload: JaSt) -> Vec<ParameterValue> {
+    const CLIPPING_MASK: u32 = 0x0000_00c0;
+
+    let channel_linked = payload.status_flags_1.channel_link();
+    let channel_1_preset_enabled = !payload.status_flags_0.channel_1_preset_disabled();
+    let channel_2_preset_enabled = !payload.status_flags_0.channel_2_preset_disabled();
+
     vec![
         float(FloatParameters::Playback(0), payload.playback_left),
         float(FloatParameters::Playback(1), payload.playback_right),
@@ -219,9 +279,9 @@ pub fn jast_parameter_values(payload: JaSt) -> Vec<ParameterValue> {
         float(FloatParameters::VirtualA(1), payload.virtual_a_right),
         float(FloatParameters::VirtualB(0), payload.virtual_b_left),
         float(FloatParameters::VirtualB(1), payload.virtual_b_right),
-        float(FloatParameters::Channel2Side(0), payload.channel_2_left),
+        float(FloatParameters::Channel2Side(0), payload.stereo_left),
         float(FloatParameters::ChannelLevel(0), payload.channel_1),
-        float(FloatParameters::Channel2Side(1), payload.channel_2_right),
+        float(FloatParameters::Channel2Side(1), payload.stereo_right),
         float(FloatParameters::ChannelLevel(1), payload.channel_2),
         float(FloatParameters::Main(0), payload.main_left),
         float(FloatParameters::Main(1), payload.main_right),
@@ -237,6 +297,14 @@ pub fn jast_parameter_values(payload: JaSt) -> Vec<ParameterValue> {
         float(FloatParameters::Limiter(1), payload.channel_2_limiter),
         uint(UIntParameters::ActivityMask(0), payload.channel_1_activity),
         uint(UIntParameters::ActivityMask(1), payload.channel_2_activity),
+        bool_value(
+            BoolParameters::Clipping(0),
+            payload.channel_1_activity & CLIPPING_MASK == CLIPPING_MASK,
+        ),
+        bool_value(
+            BoolParameters::Clipping(1),
+            payload.channel_2_activity & CLIPPING_MASK == CLIPPING_MASK,
+        ),
         uint(
             UIntParameters::StatusFlags(0),
             payload.status_flags_0.into_bytes()[0].into(),
@@ -249,13 +317,11 @@ pub fn jast_parameter_values(payload: JaSt) -> Vec<ParameterValue> {
             UIntParameters::StatusFlags(2),
             payload.status_flags_2.into(),
         ),
+        bool_value(BoolParameters::PresetEnabled(0), channel_1_preset_enabled),
+        bool_value(BoolParameters::PresetEnabled(1), channel_2_preset_enabled),
         bool_value(
-            BoolParameters::PresetEnabled(0),
-            !payload.status_flags_0.channel_1_preset_disabled(),
-        ),
-        bool_value(
-            BoolParameters::PresetEnabled(1),
-            !payload.status_flags_0.channel_2_preset_disabled(),
+            BoolParameters::LinkedPresetEnabled(),
+            channel_1_preset_enabled && channel_2_preset_enabled,
         ),
         bool_value(
             BoolParameters::PhantomPower(0),
@@ -265,10 +331,7 @@ pub fn jast_parameter_values(payload: JaSt) -> Vec<ParameterValue> {
             BoolParameters::PhantomPower(1),
             payload.channel_2_flags.enabled_48v(),
         ),
-        bool_value(
-            BoolParameters::StereoInput(),
-            payload.status_flags_1.stereo_input(),
-        ),
+        bool_value(BoolParameters::ChannelLink(), channel_linked),
         float(FloatParameters::MainGain(), payload.main_gain),
         float(FloatParameters::HeadphonesGain(), payload.gain_headphones),
         float(FloatParameters::MonitorMix(), payload.monitor_mix),
@@ -309,20 +372,22 @@ mod tests {
     fn maps_representative_jast_values() {
         let mut payload = JaSt::read_le(&mut Cursor::new([0_u8; 212])).unwrap();
         payload.playback_left = 0.25;
-        payload.channel_2_right = 0.5;
+        payload.stereo_right = 0.5;
         payload.channel_1_activity = 1;
+        payload.channel_2_activity = 0x0000_00c0;
         payload.status_flags_0.set_channel_1_preset_disabled(false);
         payload.status_flags_0.set_channel_2_preset_disabled(true);
-        payload.status_flags_1.set_stereo_input(true);
+        payload.status_flags_1.set_channel_link(true);
         payload.status_flags_2 = 0x3456;
         payload.channel_1_flags.set_enabled_48v(true);
+        payload.channel_2_flags.set_enabled_48v(true);
         payload.monitor_mix = 0.25;
         payload.channel_2_gain = 42.0;
         payload.flag_3 = 7;
 
         let values = jast_parameter_values(payload);
 
-        assert_eq!(values.len(), 41);
+        assert_eq!(values.len(), 44);
         assert!(values.contains(&ParameterValue::Float(FloatParameters::Playback(0), 0.25,)));
         assert!(values.contains(&ParameterValue::Float(
             FloatParameters::Channel2Side(1),
@@ -337,8 +402,15 @@ mod tests {
             BoolParameters::PresetEnabled(1),
             false,
         )));
+        assert!(values.contains(&ParameterValue::Bool(
+            BoolParameters::LinkedPresetEnabled(),
+            false,
+        )));
+        assert!(values.contains(&ParameterValue::Bool(BoolParameters::Clipping(0), false,)));
+        assert!(values.contains(&ParameterValue::Bool(BoolParameters::Clipping(1), true,)));
         assert!(values.contains(&ParameterValue::Bool(BoolParameters::PhantomPower(0), true,)));
-        assert!(values.contains(&ParameterValue::Bool(BoolParameters::StereoInput(), true,)));
+        assert!(values.contains(&ParameterValue::Bool(BoolParameters::PhantomPower(1), true,)));
+        assert!(values.contains(&ParameterValue::Bool(BoolParameters::ChannelLink(), true,)));
         assert!(values.contains(&ParameterValue::Float(FloatParameters::MonitorMix(), 0.25,)));
         assert!(values.contains(&ParameterValue::Float(FloatParameters::Gain(1), 42.0,)));
         assert!(values.contains(&ParameterValue::UInt(UIntParameters::EventFlag(3), 7,)));

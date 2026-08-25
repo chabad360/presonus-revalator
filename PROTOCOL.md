@@ -1,6 +1,6 @@
 # PreSonus Revelator IO24 Control Protocol Specification
 
-Version 0.3-draft
+Version 0.4-draft
 
 ## 1. Scope
 
@@ -179,10 +179,13 @@ Known typed-object tags are:
 | Tag | Description |
 |---|---|
 | `JaSt` | Application state and metering snapshot |
-| `Para` | Small application parameter wrapper |
+| `Para` | Small application parameter wrapper; value representation depends on its parameter ID |
+| `Pari` | Small integer application parameter wrapper |
 | `MemP` | Persistent/named processing state |
 | `MBdf` | Extended filter implementation block |
 | `Bqdf` | Biquad coefficient block |
+| `Lfdf` | Provisional extended EQ/filter block |
+| `MLff` | Provisional aggregate EQ/filter implementation block |
 | `gate` | Gate processing block |
 | `cpxt` | Compressor processing block |
 | `lim ` | Limiter processing block |
@@ -320,7 +323,7 @@ unless that mapping is defined by a compatible profile.
 | `0xb0` | 44 | 4 | Status flags |
 | `0xb4..0xbc` | 45..47 | 12 | Three global floating-point values |
 | `0xc0..0xcc` | 48..51 | 16 | Four per-channel floating-point values |
-| `0xd0..0xd3` | 52 | 4 | Four per-channel/event byte flags |
+| `0xd0..0xd3` | 52 | 4 | Four state/event byte flags; bytes 0 and 1 contain per-channel flags |
 
 The scalar region provides values for the following signal classes:
 
@@ -348,7 +351,31 @@ The following `status_flags` bits are defined:
 Bit 0 (`0x00000001`) is unspecified and shall be preserved when the containing
 state is rewritten.
 
-### 6.4 Physical-control notification behavior
+### 6.4 Additional discrete state
+
+For this profile, bytes 0 and 1 of dword 52, at data offsets `0xd0` and
+`0xd1`, report channel 1 and channel 2 state flags respectively. Bit 0 of each
+byte reports phantom-power state:
+
+| Value | Meaning |
+|---:|---|
+| `0` | Phantom power disabled |
+| `1` | Phantom power enabled |
+
+In each channel activity dword at indices 38 and 39, mask `0x000000c0`
+indicates that the corresponding channel is clipping. Other activity bits
+remain unspecified.
+
+Channel-link operations produce correlated changes in dword 40 and in
+`status_flags` mask `0x00001000`. An unlinked capture contained dword-40 value
+`3` with the mask clear; a linked capture contained value `4` with the mask
+set. These mappings are provisional because the controller performed other
+synchronization operations during the same transition.
+
+`status_flags` mask `0x00000080` also changes during some preset applications.
+Its meaning is unspecified.
+
+### 6.5 Physical-control notification behavior
 
 A physical preset-enable change is first observable in a subsequent `JaSt`
 reply. A connected host application may then send the corresponding
@@ -638,6 +665,19 @@ transmitted coefficients is unspecified. Implementations without a compatible
 coefficient generator shall use coefficient blocks produced by a conforming
 controller.
 
+Preset transitions also use two provisional equalizer object types:
+
+| Type | Typed length | Data length | Observed form |
+|---|---:|---:|---|
+| `Lfdf` | 44 | 36 | Nine-dword extended filter block |
+| `MLff` | 660 | 652 | Aggregate filter implementation block |
+
+Both types use object `eq  ` and the input-channel selector. They occur during
+preset transitions that apply repeated, interpolated EQ coefficient updates.
+Their body layouts and relationship to individual EQ bands are unspecified.
+An implementation shall preserve these bodies as opaque values and shall not
+generate them without a compatible template or fully specified conversion.
+
 ### 8.7 Limiter
 
 The limiter uses object and typed-object tag `lim `. Its 16-byte body is:
@@ -674,8 +714,9 @@ unspecified. Implementations using this profile shall transmit `0.999673`.
 
 ### 8.8 Generic `Para` parameter controls
 
-Generic channel and option parameters shall use the following 12-byte `Para`
-body. `PresetEnableData` is the parameter-ID-4 specialization of this layout:
+Generic floating-point channel parameters shall use the following 12-byte
+`Para` body. `PresetEnableData` is the parameter-ID-4 specialization of this
+layout:
 
 ```c
 struct GenericParameterData {
@@ -686,12 +727,11 @@ struct GenericParameterData {
 ```
 
 Generic parameter writes shall use `SetP`, selector `0`, and type `Para`.
-For channel parameters, `target_index` shall be the zero-based channel index.
-For global options, it shall be zero. The following parameter IDs are defined:
+`target_index` shall be the zero-based channel index. The following parameter
+IDs are defined:
 
 | Parameter ID | Object | Value representation |
 |---:|---|---|
-| `0` | `opt ` | Processing order (`swapcompeq`), `raw_value` encoded as `u32` 0 or 1 |
 | `1` | `0x00000000` | Reverb send in dB; continuous changes may emit intermediate values |
 | `2` | `0x00000000` | Pan normalized to `[0.0, 1.0]`; `0.0` is full left, `0.5` is center, and `1.0` is full right |
 | `3` | `Appl` | Channel gain in dB |
@@ -703,6 +743,46 @@ body `(1, 3, 0x00000000)`. Values outside the pan interval `[0.0, 1.0]` shall
 not be transmitted. The fader parameter ID and value conversion are
 unspecified. The fixed-size `mprm` object shall not be interpreted as a fader
 update without a compatible schema.
+
+### 8.9 Integer `Pari` controls
+
+Integer and enumerated controls use a distinct 20-byte typed object whose wire
+tag is `Pari`. Its 12-byte body is:
+
+```c
+struct IntegerParameterData {
+    uint32_t target_index;
+    uint32_t parameter_id;
+    uint32_t value;
+};
+```
+
+Defined writes use `SetP`, selector `0`, and the following mappings:
+
+| Object | Parameter ID | `target_index` | Value |
+|---|---:|---:|---|
+| `Appl` | `0` | `0` or `1` | Per-channel phantom power: `0` off, `1` on |
+| `Appl` | `9` | `0` or `1` | Channel-link membership: `0` unlinked, `1` linked |
+| `Appl` | `11` | `0` | Monitor source: `0` Main, `1` Mix A, `2` Mix B |
+| `opt ` | `0` | `0` | Processing order (`swapcompeq`): `0` or `1` |
+| `0x00000064` | `8` | `0` | Mix Main Mono: `0` stereo, `1` mono |
+
+To link input channels 1 and 2, the host shall write parameter ID 9 with value
+`1` for both target indices, acknowledging each write. To unlink them, it shall
+write value `0` for both target indices. A link transition may cause the
+controller to synchronize pan, processing order, and complete DSP state; these
+additional writes shall not be interpreted as part of the parameter-ID-9
+encoding.
+
+Phantom-power writes use the corresponding zero-based channel index. Both
+channel flag bytes expose the same phantom-power readback bit.
+
+Transactions with other parameter IDs, including observed
+`SetP/Appl/Pari` bodies `(0, 12, 0)`, `(1, 12, 1)`, and `(1, 16, 2)`, have no
+assigned control meaning and shall not be generated without a compatible
+profile. Firmware-derived candidate IDs 18, 27, and 28 did not produce an
+observable effect when transmitted as `Pari` and are not defined by this
+specification.
 
 ## 9. Persistent Processing State (`MemP/Stat`)
 
@@ -819,7 +899,33 @@ User-facing quantities in this object are stored in natural units:
 Effect-specific real-time blocks shall contain the corresponding derived
 coefficients and converted threshold values.
 
-### 9.4 Commit and synchronization behavior
+### 9.4 Preset application behavior
+
+A preset application consists of effect-specific real-time writes for the target
+channel followed by a `SetP/Appl/MemP` `Stat` snapshot. The snapshot's
+`preset_name` identifies the applied preset. Captured built-in names include:
+
+```text
+Vocal
+Acoustic Guitar
+Electric Guitar
+Bass Guitar
+Stereo Acoustic
+Stereo Piano
+Stereo DJ
+```
+
+The controller does not send a dedicated preset-number parameter in the defined
+capture profile. It may omit unchanged effect blocks, and different presets may
+therefore produce different write sequences. Some transitions use repeated EQ
+coefficient updates, including the provisional `Lfdf` and `MLff` objects, to
+interpolate between states.
+
+A host shall acknowledge each effect-specific write independently. It shall not
+infer preset identity from the number or order of the preceding DSP blocks; the
+`preset_name` in the final `Stat` document is the defined identity.
+
+### 9.5 Commit and synchronization behavior
 
 The host should write `MemP/Stat` after real-time effect changes settle to
 synchronize the named processing state.
@@ -831,6 +937,34 @@ This specification does not define:
 - whether the state survives power cycling;
 - whether a minimum debounce/commit interval is required;
 - how the 2028-byte fixed size is padded and validated.
+
+### 9.6 Provisional custom-preset store variant (`MemP/PrsM`)
+
+A custom-preset store uses the same `SetP/Appl/MemP` envelope and 2028-byte
+typed length as `Stat`, but its data begins with a `PrsM` tag:
+
+```text
+offset 0x00: `PrsM` tag, wire bytes 4d 73 72 50
+offset 0x04: little-endian value 22
+offset 0x08: unspecified header and length fields
+offset 0x15: UBJSON object
+```
+
+The captured store to custom slot 1 began with these 21 data bytes:
+
+```text
+4d 73 72 50 16 00 00 00 00 00 00 00 00 00 00 0a
+02 0a 02 00 00
+```
+
+Its UBJSON document used `preset_name = "custom"`. Recalling that preset used
+ordinary effect-specific writes followed by a `MemP/Stat` document with the
+same name; no dedicated slot-selection transaction was observed.
+
+The slot-number encoding, the representation of the six user-visible slots,
+the meaning of value 22 and the intermediate header bytes, and persistence
+semantics are unspecified. An implementation shall generate `PrsM` only from a
+compatible template until those fields are characterized.
 
 ## 10. Control Encoding Summary
 
@@ -849,7 +983,11 @@ This specification does not define:
 | EQ band update | `SetP/eq  /MBdf` → `SetP/eq  /Bqdf` | Derived coefficients for one section index |
 | Limiter enable | `SetP/lim /lim ` | Data dword 1, `u32` 0 or 1 |
 | Limiter threshold | `SetP/lim /lim ` | `10^(-dB/20)` in data dword 2 |
-| Processing order | `SetP/opt /Para` | Generic `Para`, parameter ID 0, boolean value |
+| Per-channel phantom power | `SetP/Appl/Pari` | Parameter ID 0, zero-based channel target; integer 0 or 1 |
+| Channel link | `SetP/Appl/Pari` | Parameter ID 9 for both channel targets; integer 0 or 1 |
+| Monitor source | `SetP/Appl/Pari` | Parameter ID 11, target 0; Main 0, Mix A 1, Mix B 2 |
+| Mix Main Mono | `SetP/0x00000064/Pari` | Parameter ID 8, target 0; stereo 0, mono 1 |
+| Processing order | `SetP/opt /Pari` | Integer parameter ID 0, boolean value |
 | Reverb send | `SetP/0x00000000/Para` | Generic `Para`, parameter ID 1, direct dB float |
 | Pan | `SetP/0x00000000/Para` | Generic `Para`, parameter ID 2, normalized float 0.0–1.0 |
 | Channel gain | `SetP/Appl/Para` | Generic `Para`, parameter ID 3; direct dB float |
@@ -883,7 +1021,8 @@ a compatible device or firmware profile.
 - Meanings of both channel-link/activity masks.
 - Meanings of state dwords 40 through 43.
 - Meaning of `status_flags` bit 0 and all unassigned status bits.
-- Meanings and lifetime of the four final event bytes.
+- Meanings and lifetime of the final state/event bytes other than the defined
+  per-channel phantom-power bits.
 - Meter scaling, smoothing, clipping, and update rate.
 
 ### 11.4 DSP blocks
@@ -905,6 +1044,8 @@ a compatible device or firmware profile.
   channels, buses, and outputs.
 - Controls for key listen, expander mode, compressor modes, per-band EQ mode,
   voice effects, and preset selection.
+- Channel hot-key control and readback. A recorded off/on/off operation produced
+  no identified vendor-protocol write or stable `JaSt` transition.
 
 ### 11.5 Persistent state
 
@@ -914,6 +1055,8 @@ a compatible device or firmware profile.
 - Commit, load, and power-cycle persistence behavior.
 - Supported UBJSON markers, limits, and unknown-key handling.
 - Semantics and permitted values of class identifiers.
+- Complete `MemP/PrsM` header, custom-slot encoding, and behavior for slots
+  other than the captured slot 1.
 
 ## 12. Compatibility Requirements
 
