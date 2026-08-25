@@ -1,4 +1,4 @@
-use crate::device_state::{Command, ParameterValue, State};
+use crate::device_state::{Command, FloatParameter, ParameterValue, State};
 use binrw::BinRead;
 use nusb::{MaybeFuture, list_devices};
 use pcap::Device;
@@ -82,32 +82,14 @@ fn message_to_state(message: Message) -> Option<State> {
 
     match body.payload {
         Payload::JaSt(payload) => Some(State::UpdateMany(vec![
-            ParameterValue::Meter(
-                Meter {
-                    id: "meter_1",
-                    range: 0.0..=1.0,
-                },
-                payload.channel_1,
-            ),
-            ParameterValue::Knob(
-                Knob {
-                    id: "gain_1",
-                    range: 0.0..=60.0,
-                },
-                payload.channel_1_gain,
-            ),
+            ParameterValue::Float(FloatParameter::Meter(0), payload.channel_1),
+            ParameterValue::Float(FloatParameter::Gain(0), payload.channel_1_gain),
         ])),
         Payload::Para {
             channel: 0,
             parameter: 3,
             value,
-        } => Some(State::Update(ParameterValue::Knob(
-            Knob {
-                id: "gain_1",
-                range: 0.0..=60.0,
-            },
-            value,
-        ))),
+        } => Some(State::Update(ParameterValue::Float(FloatParameter::Gain(0), value))),
         _ => None,
     }
 }
