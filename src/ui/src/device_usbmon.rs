@@ -1,8 +1,10 @@
-use crate::device_state::{Command, FloatParameter, FloatParameters, ParameterValue, State};
+use crate::device_state::{
+    BoolParameters, Command, FloatParameters, ParameterValue, State, jast_parameter_values,
+};
 use binrw::BinRead;
 use nusb::{MaybeFuture, list_devices};
 use pcap::Device;
-use presonus_revalator::protocol::payload::Payload;
+use presonus_revalator::protocol::payload::{ParaParameter, Payload};
 use presonus_revalator::protocol::protocol::Message;
 use std::io::{Cursor, Error, ErrorKind};
 use std::sync::mpsc;
@@ -81,15 +83,21 @@ fn message_to_state(message: Message) -> Option<State> {
     let body = message.body?;
 
     match body.payload {
-        Payload::JaSt(payload) => Some(State::UpdateMany(vec![
-            ParameterValue::Float(FloatParameters::Meter(0), payload.channel_1),
-            ParameterValue::Float(FloatParameters::Gain(0), payload.channel_1_gain),
-        ])),
+        Payload::JaSt(payload) => Some(State::UpdateMany(jast_parameter_values(payload))),
         Payload::Para {
-            channel: 0,
-            parameter: 3,
+            channel,
+            data: ParaParameter::Gain { value },
+        } if channel <= 1 => Some(State::Update(ParameterValue::Float(
+            FloatParameters::Gain(channel as u8),
             value,
-        } => Some(State::Update(ParameterValue::Float(FloatParameters::Gain(0), value))),
+        ))),
+        Payload::Para {
+            channel,
+            data: ParaParameter::Preset { enabled },
+        } if channel <= 1 => Some(State::Update(ParameterValue::Bool(
+            BoolParameters::PresetEnabled(channel as u8),
+            enabled,
+        ))),
         _ => None,
     }
 }

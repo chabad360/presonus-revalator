@@ -1,16 +1,18 @@
-use crate::device_state::{device_model, Command, FloatParameter, ParameterValue, State};
-use binrw::{BinRead, BinWrite};
+use crate::device_state::{
+    BoolParameters, Command, FloatParameters, ParameterValue, State, jast_parameter_values,
+};
+use anyhow::{Result, bail};
+use binrw::BinRead;
 use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::{Bulk, In, Out};
-use nusb::{Endpoint, MaybeFuture, list_devices};
-use presonus_revalator::protocol::payload::Payload;
+use nusb::{MaybeFuture, list_devices};
+use presonus_revalator::protocol::payload::{ParaParameter, Payload};
 use presonus_revalator::protocol::protocol::{Body, Message, Target, Verb};
 use std::io;
 use std::io::{Cursor, Error, ErrorKind, Read, Write};
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
-use anyhow::{Result, bail};
 
 fn write_msg(writer: &mut impl Write, msg: &Message) -> Result<(), Error> {
     let out = msg.to_bytes().map_err(Error::other)?;
@@ -108,63 +110,45 @@ fn process_command(
             Ok(1)
         }
         Command::Set(param) => {
-            write_msg(&mut writer, &param_to_msg(nonce, param))?;
+            write_msg(&mut writer, &param_to_msg(nonce, param)?)?;
             Ok(1)
         }
         Command::SetMany(params) => {
-            let params = params
+            let messages = params
                 .iter()
                 .enumerate()
-                .map(|(i, p)| param_to_msg(nonce.wrapping_add(i as u8), p.clone()))
-                .collect::<Vec<_>>();
-            for i in 0..params.len() {
-                write_msg(&mut writer, &params[i])?;
+                .map(|(i, parameter)| param_to_msg(nonce.wrapping_add(i as u8), *parameter))
+                .collect::<Result<Vec<_>>>()?;
+            for message in &messages {
+                write_msg(&mut writer, message)?;
             }
-            Ok(params.len())
+            Ok(messages.len())
         }
-        _ => bail!("Unknown command"),
     }
 }
 
-fn param_to_msg(nonce: u8, param: ParameterValue) -> Message {
-    let mut payload = Payload::None;
-    let mut msg = Message {
-        nonce,
-        ..Message::default()
+fn param_to_msg(nonce: u8, param: ParameterValue) -> Result<Message> {
+    let payload = match param {
+        ParameterValue::Float(FloatParameters::Gain(channel), value) => Payload::Para {
+            channel: channel.into(),
+            data: ParaParameter::Gain { value },
+        },
+        ParameterValue::Bool(BoolParameters::PresetEnabled(channel), enabled) => Payload::Para {
+            channel: channel.into(),
+            data: ParaParameter::Preset { enabled },
+        },
+        unsupported => bail!("parameter is not writable: {unsupported:?}"),
     };
-    match param {
-        // ParameterValue::Button(button, value) => {
-        //     m.body.as_mut().unwrap().verb = Verb::SetP;
-        //     m.body.as_mut().unwrap().object = Target::Appl;
-        //     m.body.as_mut().unwrap().payload.payload_type = PayloadType::JaSt;
-        //     let mut payload = [0u8; 128];
-        //     let payload_ptr = payload.as_mut_ptr() as *mut JaStBody;
-        //     unsafe {
-        //         (*payload_ptr).channel_1_gain = if value { 1.0 } else { 0.0 };
-        //     }
-        //     m.body.as_mut().unwrap().payload.payload = &payload;
-        // },
-        ParameterValue::Float(float_param, value) => {
-            match float_param {
-                FloatParameter::Gain(channel) => {
-                    payload = Payload::Para {
-                        channel: channel.into(),
-                        parameter: 3,
-                        value,
-                    }
-                }
-                _ => {}
-            }
-            let body = Body {
-                verb: Verb::SetP,
-                object: Target::Appl,
-                payload,
-            };
-            msg.body = Some(body);
-        }
-        _ => {}
-    }
-    msg
+
+    Ok(Message {
+        nonce,
+        body: Some(Body {
+            verb: Verb::SetP,
+            object: Target::Appl,
+            payload,
+        }),
+        ..Message::default()
+    })
 }
 
 fn process_usb(
@@ -185,10 +169,7 @@ fn process_usb(
     if let Some(body) = msg.body {
         match body.payload {
             Payload::JaSt(payload) => {
-                event_tx.send(State::UpdateMany(vec![
-                    ParameterValue::Float(FloatParameter::Meter(0), payload.channel_1),
-                    ParameterValue::Float(FloatParameter::Gain(0), payload.channel_1_gain),
-                ]))?;
+                event_tx.send(State::UpdateMany(jast_parameter_values(payload)))?;
             }
             _ => {
                 eprintln!("Received unexpected payload: {:?}", msg);
@@ -232,3 +213,41 @@ fn recover_writer(writer: EndpointWrite<Bulk>) -> io::Result<EndpointWrite<Bulk>
         .with_num_transfers(1))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serializes_preset_enable_and_disable_as_protocol_booleans() {
+        let enabled = param_to_msg(
+            7,
+            ParameterValue::Bool(BoolParameters::PresetEnabled(1), true),
+        )
+        .unwrap()
+        .to_bytes()
+        .unwrap();
+        let disabled = param_to_msg(
+            7,
+            ParameterValue::Bool(BoolParameters::PresetEnabled(1), false),
+        )
+        .unwrap()
+        .to_bytes()
+        .unwrap();
+
+        assert_eq!(enabled.len(), disabled.len());
+        assert_eq!(
+            &enabled[..enabled.len() - 4],
+            &disabled[..disabled.len() - 4]
+        );
+        assert_eq!(
+            &enabled[enabled.len() - 12..enabled.len() - 8],
+            &1_u32.to_le_bytes()
+        );
+        assert_eq!(
+            &enabled[enabled.len() - 8..enabled.len() - 4],
+            &4_u32.to_le_bytes()
+        );
+        assert_eq!(&enabled[enabled.len() - 4..], &1.0_f32.to_le_bytes());
+        assert_eq!(&disabled[disabled.len() - 4..], &0.0_f32.to_le_bytes());
+    }
+}
