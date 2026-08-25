@@ -1,4 +1,5 @@
 use binrw::{BinRead, BinWrite};
+use modular_bitfield::prelude::*;
 
 #[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
 pub enum Payload {
@@ -13,11 +14,39 @@ pub enum Payload {
     #[brw(magic = b"araP\x0c\0\0\0")]
     Para {
         channel: u32,
-        parameter: u32,
-        value: f32,
+        data: ParaParameter,
     },
 
     None,
+}
+
+#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
+pub enum ParaParameter {
+    #[brw(magic(0u32))]
+    ProcessingOrder { raw_value: u32 },
+
+    #[brw(magic(1u32))]
+    ReverbSend { value: f32 },
+
+    #[brw(magic(2u32))]
+    Pan { value: f32 },
+
+    #[brw(magic(3u32))]
+    Gain { value: f32 },
+
+    #[brw(magic(4u32))]
+    Preset {
+        #[br(try_map = |value: f32| match value {
+            0.0 => Ok(false),
+            1.0 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "preset enable value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1.0_f32 } else { 0.0_f32 })]
+        enabled: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
@@ -76,10 +105,13 @@ pub struct JaSt {
     pub unknown_11_0: u32,       // payload[42]
     pub unknown_11_1: u32,       // payload[43]
 
-    pub status_flags: u32, // payload[44]
+    pub status_flags_0: StatusFlags0,
 
-    pub main_gain: f32,       // payload[45] dBFS
-    pub gain_headphones: f32, // payload[46] dBFS
+    pub status_flags_1: StatusFlags1, // payload[44]
+    pub status_flags_2: u16,
+
+    pub gain_headphones: f32, // payload[45] dBFS
+    pub main_gain: f32,       // payload[46] dBFS
     pub monitor_mix: f32,     // payload[47] -1.0 to 1.0
 
     pub channel_1_gain: f32, // payload[48] 0 to 60
@@ -88,8 +120,53 @@ pub struct JaSt {
     pub unknown_12_1: f32,   // payload[51]
 
     // unknown_13_0: u32, // payload[52]
-    pub flag_0: u8, // payload[53] something to do with parameter changes, it might be a general event flag
-    pub flag_1: u8,
+    pub channel_1_flags: ChannelFlags,
+    pub channel_2_flags: ChannelFlags,
     pub flag_2: u8, // affected
     pub flag_3: u8,
+}
+
+#[bitfield]
+#[derive(Debug, Clone, Copy, PartialEq, BinRead, BinWrite)]
+#[br(map = Self::from_bytes)]
+#[bw(map = |&x| Self::into_bytes(x))]
+pub struct StatusFlags0 {
+    pub unknown_flag_0: bool,
+    pub unknown_flag_1: bool,
+    pub unknown_flag_2: bool,
+    pub unknown_flag_3: bool,
+    pub unknown_flag_4: bool,
+    pub channel_1_preset_disabled: bool,
+    pub channel_2_preset_disabled: bool,
+    pub unknown_flag_7: bool,
+}
+
+#[bitfield]
+#[derive(Debug, Clone, Copy, PartialEq, BinRead, BinWrite)]
+#[br(map = Self::from_bytes)]
+#[bw(map = |&x| Self::into_bytes(x))]
+pub struct StatusFlags1 {
+    pub unknown_flag_0: bool,
+    pub stereo_input: bool,
+    pub unknown_flag_2: bool,
+    pub unknown_flag_3: bool,
+    pub unknown_flag_4: bool,
+    pub unknown_flag_5: bool,
+    pub unknown_flag_6: bool,
+    pub unknown_flag_7: bool,
+}
+
+#[bitfield]
+#[derive(Debug, Clone, Copy, PartialEq, BinRead, BinWrite)]
+#[br(map = Self::from_bytes)]
+#[bw(map = |&x| Self::into_bytes(x))]
+pub struct ChannelFlags {
+    pub enabled_48v: bool,
+    pub unknown_flag_1: bool,
+    pub unknown_flag_2: bool,
+    pub unknown_flag_3: bool,
+    pub unknown_flag_4: bool,
+    pub unknown_flag_5: bool,
+    pub unknown_flag_6: bool,
+    pub unknown_flag_7: bool,
 }
