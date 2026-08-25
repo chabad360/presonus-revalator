@@ -80,7 +80,7 @@ fn bulk_message_data(packet: &[u8]) -> Option<&[u8]> {
 fn message_to_state(message: Message) -> Option<State> {
     let body = message.body?;
 
-    if !(body.object == Target::Appl && (body.payload == Payload::AskJaSt || matches!(body.payload, Payload::JaSt { .. }))) {
+    if !(matches!(body.object, Target::Appl(_) ) && (body.payload == Payload::AskJaSt || matches!(body.payload, Payload::JaSt { .. } ) || matches!(body.payload, Payload::MemP { .. }))) {
         println!("{body:?}")
     }
 
@@ -90,10 +90,6 @@ fn message_to_state(message: Message) -> Option<State> {
             channel,
             data,
         } => {
-            if channel > 1 {
-                // eprintln!("Unexpected Channel: {channel}: {data:#?}");
-                return None;
-            }
             match data {
                 ParaParameter::Gain { value } => Some(State::Update(ParameterValue::Float(
                     FloatParameters::Gain(channel as u8),
@@ -115,25 +111,24 @@ fn message_to_state(message: Message) -> Option<State> {
                     BoolParameters::PresetEnabled(channel as u8),
                     enabled,
                 ))),
+                ParaParameter::Blend { .. } => None,
                 ParaParameter::Unknown { id, value } => {
                     // eprintln!("Unknown Para: {id}: {value}");
                     None
                 }
+                ParaParameter::OutputDelay { .. } => None
             }
         }
         Payload::Pari {
             channel,
             data
         } => {
-            if channel > 1 {
-                eprintln!("Unexpected Channel: {channel}: {data:#?}");
-                return None;
-            }
             match data {
                 PariParameter::PhantomPower { enabled } => Some(State::Update(ParameterValue::Bool(
                     BoolParameters::PhantomPower(channel as u8),
                     enabled,
                 ))),
+                PariParameter::MixMono { enabled } => None,
                 PariParameter::ChannelLink { enabled } => Some(State::Update(ParameterValue::Bool(
                     BoolParameters::ChannelLink(),
                     enabled,
@@ -146,6 +141,10 @@ fn message_to_state(message: Message) -> Option<State> {
                     // eprintln!("Unknown Pari: {id}: {value}");
                     None
                 }
+                PariParameter::USBFatChannel { .. } => None,
+                PariParameter::DelayChannel { .. } => None,
+                PariParameter::DualPreset { .. } => None,
+                PariParameter::Preset { .. } => None,
             }
         }
         _ => None

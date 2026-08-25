@@ -7,7 +7,7 @@ use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::{Bulk, In, Out};
 use nusb::{MaybeFuture, list_devices};
 use presonus_revalator::protocol::payload::{ParaParameter, PariParameter, Payload};
-use presonus_revalator::protocol::protocol::{Body, Message, Target, Verb};
+use presonus_revalator::protocol::protocol::{Body, Channel, Message, Selector, Target, Verb};
 use std::io;
 use std::io::{Cursor, Error, ErrorKind, Read, Write};
 use std::sync::mpsc;
@@ -116,7 +116,7 @@ fn next_messages(nonce: u8, update_rx: &mut Receiver<Command>) -> anyhow::Result
             nonce,
             body: Some(Body {
                 verb: Verb::GetP,
-                object: Target::Appl,
+                object: Target::Appl(Selector::None),
                 payload: Payload::AskJaSt,
             }),
             ..Default::default()
@@ -140,7 +140,7 @@ fn param_to_msgs(nonce: u8, param: ParameterValue) -> Result<Vec<Message>> {
                 message(
                     nonce.wrapping_add(channel as u8),
                     Payload::Pari {
-                        channel,
+                        channel: channel.into(),
                         data: PariParameter::ChannelLink { enabled },
                     },
                 )
@@ -154,7 +154,7 @@ fn param_to_msgs(nonce: u8, param: ParameterValue) -> Result<Vec<Message>> {
                 message(
                     nonce.wrapping_add(channel as u8),
                     Payload::Para {
-                        channel,
+                        channel: channel.into(),
                         data: ParaParameter::Preset { enabled },
                     },
                 )
@@ -190,7 +190,7 @@ fn message(nonce: u8, payload: Payload) -> Message {
         nonce,
         body: Some(Body {
             verb: Verb::SetP,
-            object: Target::Appl,
+            object: Target::Appl(Selector::None),
             payload,
         }),
         ..Message::default()

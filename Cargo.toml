@@ -14,3 +14,6 @@ derive_more = {  version = "2.1.1", features = ["try_from"] }
 binrw = "0.15.1"
 anyhow = "1.0.104"
 modular-bitfield = "0.13.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_ubj = { version = "0.2.0", default-features = true}
+serde_ub_json = "0.1.0"

@@ -1,8 +1,8 @@
 pub use super::payload::Payload;
-use binrw::{BinRead, BinResult, BinWrite, Endian, binwrite};
-use std::io::{Cursor, Seek, Write};
+use binrw::{BinRead, BinResult, BinWrite};
+use std::io::Cursor;
 
-#[derive(Debug, Clone, Copy, BinWrite, BinRead, Default)]
+#[derive(Debug, Clone, Copy, BinWrite, BinRead, Default, Eq, PartialEq)]
 pub enum Verb {
     #[brw(magic(b"ylpR"))]
     Rply,
@@ -15,17 +15,36 @@ pub enum Verb {
     Unknown([u8; 4]),
 }
 
-#[derive(Debug, Clone, Copy, BinWrite, BinRead, Default)]
+#[derive(Debug, Clone, Copy, BinWrite, BinRead, Eq, PartialEq)]
 pub enum Target {
-    #[default]
     #[brw(magic(b"lppA"))]
-    Appl,
-    #[brw(magic(b"comp"))]
-    Comp,
-    #[brw(magic(b"\0tpO"))]
-    Opt,
+    Appl(Selector),
 
-    Unknown([u8; 4]),
+    #[brw(magic(0u32))]
+    None(Selector),
+    #[brw(magic(b"pmoc"))]
+    Comp(Channel),
+    #[brw(magic(b" tpo"))]
+    Opt(Channel),
+    #[brw(magic(b"  qe"))]
+    Eq(Channel),
+    #[brw(magic(b" mil"))]
+    Lim(Channel),
+    #[brw(magic(b"etag"))]
+    Gate(Channel),
+    #[brw(magic(b"tlif"))]
+    Filt(Channel),
+
+    #[brw(magic(0x000000CAu32))]
+    _CA(u32),
+    #[brw(magic(0x000000C9u32))]
+    VocalEffect(Channel),
+    #[brw(magic(b"\0\0\0@"))]
+    At(u32),
+    #[brw(magic(100u32))]
+    Bus(Bus),
+
+    Unknown(u32, u32),
 }
 
 #[derive(Debug, Clone, Copy, BinWrite, BinRead, Default)]
@@ -37,7 +56,7 @@ pub enum Direction {
     OUT,
 }
 
-#[derive(Debug, Clone, Copy, BinRead, BinWrite, Default)]
+#[derive(Debug, Clone, BinRead, BinWrite, Default)]
 #[brw(little)]
 pub struct Message {
     pub length: u16,
@@ -67,11 +86,44 @@ impl Message {
     }
 }
 
-#[derive(Debug, Clone, Copy, BinRead, BinWrite)]
+#[derive(Debug, Clone, BinRead, BinWrite)]
 pub struct Body {
     pub verb: Verb,
     pub object: Target,
-    // selector: u32,
-    #[brw(pad_before(4))]
+    // pub Bus: Bus,
+    // #[brw(pad_before(4))]
     pub payload: Payload,
+}
+
+
+#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq, Eq, Default)]
+#[brw(repr = u32)]
+pub enum Selector {
+    #[default]
+    None
+}
+
+#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq, Eq)]
+#[brw(repr = u32)]
+pub enum Bus {
+    MainMix,
+    MixA,
+    MixB,
+}
+
+#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq, Eq)]
+#[brw(repr = u32)]
+pub enum Channel {
+    Channel1,
+    Channel2,
+}
+
+impl From<u8> for Channel {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Channel::Channel1,
+            1 => Channel::Channel2,
+            _ => panic!("Invalid channel value: {}", value),
+        }
+    }
 }

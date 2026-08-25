@@ -1,7 +1,13 @@
-use binrw::{BinRead, BinWrite};
+use crate::protocol::protocol::{Bus, Channel};
+use binrw::{BinRead, BinResult, BinWrite};
 use modular_bitfield::prelude::*;
+use serde::{Deserialize, Serialize};
+use serde_ub_json::from_bytes;
+use serde_ubj::to_vec;
+use std::io::SeekFrom;
+use std::io::{Error, ErrorKind};
 
-#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
+#[derive(Debug, Clone, BinRead, BinWrite, PartialEq)]
 pub enum Payload {
     #[brw(
         magic = b"tSaJ\xdc\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\x80\x3f\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\xe1\x01"
@@ -11,28 +17,394 @@ pub enum Payload {
     #[brw(magic = b"tSaJ\xdc\0\0\0")]
     JaSt(JaSt),
 
-    #[brw(magic = b"araP\x0c\0\0\0")]
+    #[brw(magic = b"araP\x14\0\0\0")]
     Para {
-        channel: u32,
+        channel: Channel,
         data: ParaParameter,
+    },
+
+    #[brw(magic = b"iraP\x14\0\0\0")]
+    Pari {
+        channel: Channel,
+        data: PariParameter,
+    },
+
+    #[brw(magic = b"PmeM")]
+    MemP {
+        size: u32,
+        store: Store,
+        page_0: u32,
+        page_1: u32,
+        version: u32,
+        header: u32,
+
+        #[br(count = size - 29)]
+        data: Vec<u8>,
+        // #[br(pad_before(1), args{ size: size - 29 })]
+        // parsed: MemoryData,
+    },
+
+    #[brw(magic = b"PmeM")]
+    GetMemP {
+        size: u32,
+        store: Store,
+        page_0: u32,
+        page_1: u32,
+        unknown: u32,
+    },
+
+    #[brw(magic = b"tatS")]
+    Stat {
+        version: u32,
+        header: u32,
+        length: u32,
+        #[br(count = length)]
+        data: Vec<u8>,
+    },
+
+    #[brw(magic = b"fdBM\xf4\x01\0\0")]
+    MBdf {
+        unknown_0: u32,
+        unknown_1: u32,
+        sample_rate_coefficients: [BiquadRate; 4],
+        // #[br(count = size - (4 * std::mem::size_of::<BiquadRate>() as u32) - 8 - 8)]
+        extra: [u32; 388 / 4],
+    },
+
+    #[brw(magic = b"fdqB\x24\0\0\0")]
+    Bqdf {
+        unknown: u32,
+        idx: u32,
+        coefficients: [f32; 4],
+    },
+
+    #[brw(magic = b"fdfL")]
+    Lfdf {
+        size: u32,
+        unknown: u32,
+        #[br(count = (size - 12)/4)]
+        data: Vec<f32>,
+    },
+
+    #[brw(magic = b"ffLM")]
+    MLff {
+        size: u32,
+        unknown: u32,
+        #[br(count = (size - 12)/4)]
+        data: Vec<f32>,
+    },
+
+    #[brw(magic = b"etag\x48\0\0\0")]
+    Gate {
+        unknown: u32,
+        filter_biquad: [f32; 5],
+        expander: f32,
+        threshold: f32,
+        attack_sec: f32,
+        release_sec: f32,
+        attack_coeff: f32,
+        release_coeff: f32,
+        unknown_val: u32,
+
+        #[br(try_map = |value: u32| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "phantom-power value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1u32 } else { 0u32 })]
+        enabled: bool,
+        #[br(try_map = |value: u32| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "phantom-power value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1u32 } else { 0u32 })]
+        expander_auto: bool,
+        #[br(try_map = |value: u32| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "phantom-power value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1u32 } else { 0u32 })]
+        key_listen: bool,
+    },
+
+    #[brw(magic = b"txpc\x40\0\0\0")]
+    Cpxt {
+        unknown: u32,
+        filter_biquad: [f32; 5],
+        attack_sec: f32,
+        release_sec: f32,
+        ratio: f32,
+        knee_coeff: f32,
+        threshold_db: f32,
+        gain: f32,
+
+        #[br(try_map = |value: u32| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "phantom-power value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1u32 } else { 0u32 })]
+        enabled: bool,
+        #[br(try_map = |value: u32| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "phantom-power value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1u32 } else { 0u32 })]
+        key_listen: bool,
+    },
+
+    #[brw(magic = b" mil\x18\0\0\0")]
+    Lim {
+        #[br(try_map = |value: u32| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "enabled value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1u32 } else { 0u32 })]
+        enabled: bool,
+        smoothing_coeff: u32,
+        threshold: f32,
+    },
+
+    #[brw(magic = b"bvrv\x38\0\0\0")]
+    Reverb {
+        unknown_0: u32,
+        unknown_1: u32,
+        unknown_2: f32,
+        unknown_3: u32,
+        pre_delay_sec: f32,
+        size: f32,
+        hpf: f32,
+        coefficients: [f32; 5],
+    },
+
+    #[brw(magic = b"mrpm\xf0\x01\0\0")]
+    Mprm {
+        #[brw(pad_size_to = 488, restore_position)]
+        unknown: u32,
+
+        #[brw(seek_before = SeekFrom::End(-4), restore_position)]
+        length: u32,
+
+        #[br(pad_before = 4, count = length, pad_size_to = 480)]
+        records: Vec<MprmRecord>,
+    },
+
+    #[brw(magic(b"xFoV\x10\0\0\0"))]
+    VoFx {
+        unknown: u32,
+        option: VocalEffects,
+    },
+
+    #[brw(magic(b"ctob\x28\0\0\0"))]
+    Filters {
+        unknown: u32,
+        #[br(try_map = |value: u32| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "enabled value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1u32 } else { 0u32 })]
+        enabled: bool,
+        tune: u32,
+        feedback: f32,
+        damping: f32,
+        dist: f32,
+        unknown_6: f32,
+        mix: f32,
+    },
+
+    #[brw(magic = b"vdog\x20\0\0\0")]
+    Transformer {
+        idx: u32,
+        #[br(try_map = |value: u32| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "enabled value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1u32 } else { 0u32 })]
+        enabled: bool,
+        lows: f32,
+        width: f32,
+        lows_2: f32,
+        mix: f32,
+    },
+
+    #[brw(magic = b"hcev\x1c\0\0\0")]
+    Delay {
+        unknown_0: u32,
+        #[br(try_map = |value: u32| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "enabled value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1u32 } else { 0u32 })]
+        enabled: bool,
+        mix: f32,
+        feedback: f32,
+        time_sec: f32,
+    },
+
+    #[brw(magic = b"btob\x28\0\0\0")]
+    RingModulator {
+        unknown_0: u32,
+        #[br(try_map = |value: u32| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "enabled value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1u32 } else { 0u32 })]
+        enabled: bool,
+        freq: f32,
+        dist: f32,
+        unknown_4: f32,
+        #[br(try_map = |value: u32| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "sub value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1u32 } else { 0u32 })]
+        sub: bool,
+        sc_freq: f32,
+        mix: f32,
+    },
+
+    #[brw(magic = b"atob\x28\0\0\0")]
+    Vocoder {
+        unknown_0: u32,
+        #[br(try_map = |value: u32| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "enabled value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1u32 } else { 0u32 })]
+        enabled: bool,
+        ty: VocoderType,
+        freq: f32,
+        unknown_4: f32,
+        unknown_5: u32,
+        unknown_6: u32,
+        mix: f32,
+    },
+
+    #[brw(magic = b"4yam\x24\0\0\0")]
+    DeTuner {
+        unknown_0: u32,
+        #[br(try_map = |value: u32| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "enabled value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1u32 } else { 0u32 })]
+        enabled: bool,
+        detune: u32,
+        unknown_3: u32,
+        unknown_4: u32,
+        unknown_5: u32,
+        mix: f32,
+    },
+
+    Unknown {
+        tag: [u8; 4],
+        size: u32,
+        #[br(count = size.checked_sub(8).map_or(0, |x| x / 4))]
+        data: Vec<u32>,
+    },
+
+    UnknownTag {
+        tag: [u8; 4],
     },
 
     None,
 }
 
 #[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
+#[brw(repr = u32)]
+pub enum VocoderType {
+    Noise,
+    Sawtooth,
+    Rect,
+}
+
+#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
+pub enum Store {
+    #[brw(magic(b"MsrP"))]
+    PresetMemory,
+
+    #[brw(magic(b"tatS"))]
+    Static,
+}
+
+#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
+pub struct BiquadRate {
+    coefficients: [f32; 5],
+    sample_rate: f32,
+}
+
+
+#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
 pub enum ParaParameter {
     #[brw(magic(0u32))]
-    ProcessingOrder { raw_value: u32 },
+    ProcessingOrder {
+        raw_value: u32,
+    },
 
     #[brw(magic(1u32))]
-    ReverbSend { value: f32 },
+    ReverbSend {
+        value: f32,
+    },
 
     #[brw(magic(2u32))]
-    Pan { value: f32 },
+    Pan {
+        value: f32,
+    },
 
     #[brw(magic(3u32))]
-    Gain { value: f32 },
+    Gain {
+        value: f32,
+    },
 
     #[brw(magic(4u32))]
     Preset {
@@ -47,7 +419,117 @@ pub enum ParaParameter {
         #[bw(map = |&enabled| if enabled { 1.0_f32 } else { 0.0_f32 })]
         enabled: bool,
     },
+
+    #[brw(magic(10u32))]
+    Blend { value: f32 },
+
+    #[brw(magic(14u32))]
+    OutputDelay { sec: f32 },
+
+    Unknown {
+        id: u32,
+        value: f32,
+    },
 }
+
+#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
+pub enum PariParameter {
+    #[brw(magic(0u32))]
+    PhantomPower {
+        #[br(try_map = |value: u32| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "phantom-power value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1u32 } else { 0u32 })]
+        enabled: bool,
+    },
+
+    #[brw(magic(3u32))]
+    USBFatChannel {
+        #[br(try_map = |value: u32| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "phantom-power value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1u32 } else { 0u32 })]
+        enabled: bool,
+    },
+
+    #[brw(magic(8u32))]
+    MixMono {
+        #[br(try_map = |value: u32| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Mix-Mono value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1u32 } else { 0u32 })]
+        enabled: bool,
+    },
+
+    #[brw(magic(9u32))]
+    ChannelLink {
+        #[br(try_map = |value: u32| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "channel-link value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1u32 } else { 0u32 })]
+        enabled: bool,
+    },
+
+    #[brw(magic(11u32))]
+    MonitorSource {
+        source: Bus,
+    },
+
+    #[brw(magic(13u32))]
+    DelayChannel { channel: USBChannel },
+
+    #[brw(magic(16u32))]
+    Preset { preset: u32 },
+
+    #[brw(magic(17u32))]
+    DualPreset {
+        #[br(try_map = |value: u32| match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "channel-link value must be zero or one",
+            )),
+        })]
+        #[bw(map = |&enabled| if enabled { 1u32 } else { 0u32 })]
+        enabled: bool,
+    },
+
+    Unknown {
+        id: u32,
+        value: u32,
+    },
+}
+
+#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
+#[brw(repr = u32)]
+pub enum USBChannel {
+    None = -1,
+    USB12,
+    USB34,
+    USB56,
+}
+
 
 #[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
 pub struct JaSt {
@@ -60,10 +542,10 @@ pub struct JaSt {
     pub virtual_b_left: f32,  // payload[4] dBFS
     pub virtual_b_right: f32, // payload[5] dBFS
 
-    pub channel_2_left: f32,  // payload[6] dBFS
-    pub channel_1: f32,       // payload[7] dBFS
-    pub channel_2_right: f32, // payload[8] dBFS
-    pub channel_2: f32,       // payload[9] dBFS
+    pub stereo_left: f32,  // payload[6] dBFS
+    pub channel_1: f32,    // payload[7] dBFS
+    pub stereo_right: f32, // payload[8] dBFS
+    pub channel_2: f32,    // payload[9] dBFS
 
     pub unknown_1_0: u32, // payload[10]
     pub unknown_1_1: u32, // payload[11]
@@ -126,6 +608,41 @@ pub struct JaSt {
     pub flag_3: u8,
 }
 
+#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
+#[brw(repr = u32)]
+pub enum VocalEffects {
+    Transformer,
+    DeTuner,
+    Vocoder,
+    RingModulator,
+    Filters,
+    Delay,
+}
+
+#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
+pub struct MprmRecord {
+    pub channel: MixChannel,
+    pub value: f32,
+}
+
+#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
+pub enum MixChannel {
+    #[brw(magic(0u32))]
+    Playback,
+    #[brw(magic(1u32))]
+    VirtualA,
+    #[brw(magic(2u32))]
+    VirtualB,
+    #[brw(magic(3u32))]
+    Channel1,
+    #[brw(magic(4u32))]
+    Channel2,
+    #[brw(magic(5u32))]
+    Reverb,
+
+    Unknown(u32),
+}
+
 #[bitfield]
 #[derive(Debug, Clone, Copy, PartialEq, BinRead, BinWrite)]
 #[br(map = Self::from_bytes)]
@@ -146,14 +663,14 @@ pub struct StatusFlags0 {
 #[br(map = Self::from_bytes)]
 #[bw(map = |&x| Self::into_bytes(x))]
 pub struct StatusFlags1 {
-    pub unknown_flag_0: bool,
-    pub stereo_input: bool,
-    pub unknown_flag_2: bool,
-    pub unknown_flag_3: bool,
-    pub unknown_flag_4: bool,
-    pub unknown_flag_5: bool,
-    pub unknown_flag_6: bool,
-    pub unknown_flag_7: bool,
+    pub unknown_flag_8: bool,
+    pub unknown_flag_9: bool,
+    pub unknown_flag_10: bool,
+    pub unknown_flag_11: bool,
+    pub channel_link: bool,
+    pub unknown_flag_13: bool,
+    pub unknown_flag_14: bool,
+    pub unknown_flag_15: bool,
 }
 
 #[bitfield]
@@ -169,4 +686,85 @@ pub struct ChannelFlags {
     pub unknown_flag_5: bool,
     pub unknown_flag_6: bool,
     pub unknown_flag_7: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn round_trips_captured_pari_payload() {
+        let bytes = [
+            b'i', b'r', b'a', b'P', 20, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 1, 0, 0, 0,
+        ];
+
+        let payload = Payload::read_le(&mut Cursor::new(bytes)).unwrap();
+        assert_eq!(
+            payload,
+            Payload::Pari {
+                channel: 0,
+                data: PariParameter::ChannelLink { enabled: true },
+            }
+        );
+
+        let mut encoded = Cursor::new(Vec::new());
+        payload.write_le(&mut encoded).unwrap();
+        assert_eq!(encoded.into_inner(), bytes);
+    }
+}
+
+
+#[derive(Debug, Clone, PartialEq, BinRead, BinWrite)]
+#[br(import{ size: u32 })]
+pub enum MemoryData {
+    Preset {
+        #[br(parse_with = parse_preset, args(size))]
+        // #[bw(write_with = write_preset)]
+        #[bw(try_map = serde_ub_json::to_bytes)]
+        preset: Preset,
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct Preset {
+    pub preset_name: String,
+    // pub icon_id: String,
+    // pub opt:
+}
+
+#[binrw::parser(reader, endian)]
+fn parse_preset(
+    size: u32,
+) -> BinResult<Preset> {
+    let mut buf = vec![0u8; size as usize];
+    reader.read_exact(&mut buf)?; // or use binrw's read_to_end if you prefer
+
+    // eprintln!("buf: {:X?}", buf);
+
+    // from_vec(buf).map_err(|e| {
+    from_bytes(&*buf).map_err(|e| {
+        eprintln!("failed to parse: {e:#?}");
+        binrw::Error::Custom {
+            pos: 0,
+            err: Box::new(Error::new(ErrorKind::InvalidData, e)),
+        }
+    })
+}
+
+#[binrw::writer(writer, endian)]
+fn write_preset(this: &Preset) -> BinResult<()> {
+    let bytes = to_vec(this).map_err(|e| {
+        eprintln!("failed to write {e:?}");
+        binrw::Error::Custom {
+            pos: 0,
+            err: Box::new(Error::new(
+                ErrorKind::InvalidData,
+                e,
+            )),
+        }
+    })?;
+
+    writer.write_all(&bytes)?;
+    Ok(())
 }
