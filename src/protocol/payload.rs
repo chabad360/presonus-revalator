@@ -1,10 +1,10 @@
 use crate::protocol::protocol::{Bus, Channel};
 use binrw::{BinRead, BinResult, BinWrite};
+use enum_map::Enum;
 use modular_bitfield::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_ub_json::from_bytes;
 use serde_ubj::to_vec;
-use std::io::SeekFrom;
 use std::io::{Error, ErrorKind};
 
 #[derive(Debug, Clone, BinRead, BinWrite, PartialEq)]
@@ -66,18 +66,6 @@ pub enum ApplPayload {
         unknown: u32,
         #[br(count = (size - 12)/4)]
         data: Vec<f32>,
-    },
-
-    #[brw(magic = b"mrpm\xf0\x01\0\0")]
-    Mprm {
-        #[brw(pad_size_to = 488, restore_position)]
-        unknown: u32,
-
-        #[brw(seek_before = SeekFrom::End(-4), restore_position)]
-        length: u32,
-
-        #[br(pad_before = 4, count = length, pad_size_to = 480)]
-        records: Vec<Fader>,
     },
 
     Unknown {
@@ -281,13 +269,13 @@ pub enum BusPayload {
 
     #[brw(magic = b"mrpm\xf0\x01\0\0")]
     Fader {
-        #[brw(pad_size_to = 488, restore_position)]
+        // #[brw(pad_size_to = 488, restore_position)]
         unknown: u32,
 
-        #[brw(seek_before = SeekFrom::End(-4), restore_position)]
+        #[brw(pad_before(480), restore_position)]
         length: u32,
 
-        #[br(pad_before = 4, count = length, pad_size_to = 480)]
+        #[br(count = length)]
         records: Vec<Fader>,
     },
 
@@ -684,7 +672,7 @@ fn f32tob(value: f32) -> Result<bool, Error> {
         _ => Err(Error::new(
             ErrorKind::InvalidData,
             "phantom-power value must be zero or one",
-        ))
+        )),
     }
 }
 
@@ -695,7 +683,7 @@ fn u32tob(value: u32) -> Result<bool, Error> {
         _ => Err(Error::new(
             ErrorKind::InvalidData,
             "phantom-power value must be zero or one",
-        ))
+        )),
     }
 }
 
@@ -829,10 +817,7 @@ pub enum DefaultPariParameter {
 
 #[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
 pub enum OptParaParameter {
-    Unknown {
-        id: u32,
-        value: f32,
-    },
+    Unknown { id: u32, value: f32 },
 }
 
 #[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
@@ -857,6 +842,36 @@ pub enum ProcessingOrder {
 
 #[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
 pub enum BusParaParameter {
+    #[brw(magic(0u32))]
+    Playback {
+        value: f32,
+    },
+
+    #[brw(magic(1u32))]
+    VirtualA {
+        value: f32,
+    },
+
+    #[brw(magic(2u32))]
+    VirtualB {
+        value: f32,
+    },
+
+    #[brw(magic(3u32))]
+    Channel1 {
+        value: f32,
+    },
+
+    #[brw(magic(4u32))]
+    Channel2 {
+        value: f32,
+    },
+
+    #[brw(magic(5u32))]
+    Reverb {
+        value: f32,
+    },
+
     Unknown {
         id: u32,
         value: f32,
@@ -981,7 +996,7 @@ pub struct Fader {
     pub value: f32,
 }
 
-#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq)]
+#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq, Enum, Eq)]
 pub enum MixChannel {
     #[brw(magic(0u32))]
     Playback,
@@ -996,7 +1011,21 @@ pub enum MixChannel {
     #[brw(magic(5u32))]
     Reverb,
 
-    Unknown(u32),
+    // Unknown(u32),
+}
+
+impl From<u32> for MixChannel {
+    fn from(value: u32) -> Self {
+        match value {
+            0 => MixChannel::Playback,
+            1 => MixChannel::VirtualA,
+            2 => MixChannel::VirtualB,
+            3 => MixChannel::Channel1,
+            4 => MixChannel::Channel2,
+            5 => MixChannel::Reverb,
+            _ => panic!("Invalid value for MixChannel: {}", value),
+        }
+    }
 }
 
 #[bitfield]
@@ -1055,12 +1084,12 @@ mod tests {
             b'i', b'r', b'a', b'P', 20, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 1, 0, 0, 0,
         ];
 
-        let payload = Payload::read_le(&mut Cursor::new(bytes)).unwrap();
+        let payload = ApplPayload::read_le(&mut Cursor::new(bytes)).unwrap();
         assert_eq!(
             payload,
-            Payload::Pari {
-                channel: 0,
-                data: PariParameter::ChannelLink { enabled: true },
+            ApplPayload::Pari {
+                channel: Channel::Channel1,
+                data: ApplPariParameter::ChannelLink { enabled: true },
             }
         );
 

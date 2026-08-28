@@ -732,17 +732,37 @@ IDs are defined:
 
 | Parameter ID | Object | Value representation |
 |---:|---|---|
+| `1` | `Appl` | Headphones output level in dB |
 | `1` | `0x00000000` | Reverb send in dB; continuous changes may emit intermediate values |
+| `2` | `Appl` | Main output level in dB |
 | `2` | `0x00000000` | Pan normalized to `[0.0, 1.0]`; `0.0` is full left, `0.5` is center, and `1.0` is full right |
 | `3` | `Appl` | Channel gain in dB |
 | `4` | `Appl` | Preset processing enable, encoded as `f32` 0.0 or 1.0 |
+| `10` | `Appl` | Monitor blend normalized to `[-1.0, 1.0]` |
 
-For parameter IDs 1 through 4, `raw_value` shall contain a little-endian
+For the defined `Para` parameter IDs, `raw_value` shall contain a little-endian
 IEEE-754 binary32 value. For channel 2, setting gain to 0 dB shall produce the
 body `(1, 3, 0x00000000)`. Values outside the pan interval `[0.0, 1.0]` shall
-not be transmitted. The fader parameter ID and value conversion are
-unspecified. The fixed-size `mprm` object shall not be interpreted as a fader
-update without a compatible schema.
+not be transmitted.
+
+Mix faders use object `0x00000064`, a bus selector (`0` Main, `1` Mix A, `2`
+Mix B), type `Para`, and target index `0`. Their parameter IDs identify the
+source mixed into that bus:
+
+| Parameter ID | Mix source |
+|---:|---|
+| `0` | Playback |
+| `1` | Virtual A |
+| `2` | Virtual B |
+| `3` | Channel 1 |
+| `4` | Channel 2 |
+| `5` | Reverb |
+
+The fader value is a direct dB `f32`; `-144.0` represents silence. The same
+address is readable with `GetP`, which returns the current fader value. The
+valid upper limit and quantization are not yet characterized. The fixed-size
+`mprm` object shall not be interpreted as a fader update; direct `GetP` probes
+of `mprm` echo the request body rather than returning mixer state.
 
 ### 8.9 Integer `Pari` controls
 
@@ -765,7 +785,7 @@ Defined writes use `SetP`, selector `0`, and the following mappings:
 | `Appl` | `9` | `0` or `1` | Channel-link membership: `0` unlinked, `1` linked |
 | `Appl` | `11` | `0` | Monitor source: `0` Main, `1` Mix A, `2` Mix B |
 | `opt ` | `0` | `0` | Processing order (`swapcompeq`): `0` or `1` |
-| `0x00000064` | `8` | `0` | Mix Main Mono: `0` stereo, `1` mono |
+| `0x00000064` | `8` | `0` | Selected bus mono mode: `0` stereo, `1` mono; selector `0` Main, `1` Mix A, `2` Mix B |
 
 To link input channels 1 and 2, the host shall write parameter ID 9 with value
 `1` for both target indices, acknowledging each write. To unlink them, it shall
@@ -783,6 +803,13 @@ assigned control meaning and shall not be generated without a compatible
 profile. Firmware-derived candidate IDs 18, 27, and 28 did not produce an
 observable effect when transmitted as `Pari` and are not defined by this
 specification.
+
+On the tested firmware, `GetP` requests must carry a valid typed-object value;
+invalid sentinels are echoed unchanged even with status zero. Startup reads use
+valid fallback values and consume the `Rply` value for `Appl/Para`,
+`Appl/Pari`, `0x00000000/Para`, `opt /Pari`, and bus `Para`/`Pari` objects.
+These reads initialize output levels, blend, pan, reverb send, processing
+order, monitor source, mixer faders, and each bus's mono mode.
 
 ## 9. Persistent Processing State (`MemP/Stat`)
 
@@ -986,11 +1013,15 @@ compatible template until those fields are characterized.
 | Per-channel phantom power | `SetP/Appl/Pari` | Parameter ID 0, zero-based channel target; integer 0 or 1 |
 | Channel link | `SetP/Appl/Pari` | Parameter ID 9 for both channel targets; integer 0 or 1 |
 | Monitor source | `SetP/Appl/Pari` | Parameter ID 11, target 0; Main 0, Mix A 1, Mix B 2 |
-| Mix Main Mono | `SetP/0x00000064/Pari` | Parameter ID 8, target 0; stereo 0, mono 1 |
+| Mix mono | `GetP`/`SetP` on `0x00000064/Pari` | Bus selector 0–2, parameter ID 8, target 0; stereo 0, mono 1 |
+| Headphones output | `GetP`/`SetP` on `Appl/Para` | Parameter ID 1, target 0, direct dB float |
+| Main output | `GetP`/`SetP` on `Appl/Para` | Parameter ID 2, target 0, direct dB float |
+| Monitor blend | `GetP`/`SetP` on `Appl/Para` | Parameter ID 10, target 0, normalized float -1.0–1.0 |
 | Processing order | `SetP/opt /Pari` | Integer parameter ID 0, boolean value |
 | Reverb send | `SetP/0x00000000/Para` | Generic `Para`, parameter ID 1, direct dB float |
 | Pan | `SetP/0x00000000/Para` | Generic `Para`, parameter ID 2, normalized float 0.0–1.0 |
 | Channel gain | `SetP/Appl/Para` | Generic `Para`, parameter ID 3; direct dB float |
+| Mix fader | `GetP`/`SetP` on `0x00000064/Para` | Bus selector 0–2, target 0, source parameter ID 0–5, direct dB float; `-144.0` is silence |
 | Named processing state | `SetP/Appl/MemP` | UBJSON `Stat` document |
 
 ## 11. Research Gaps and Unspecified Behavior
@@ -1036,7 +1067,7 @@ a compatible device or firmware profile.
 - Whether `MBdf` must be sent before every corresponding `Bqdf` update or only
   when the filter family changes.
 - Limiter smoothing/time-constant calculation.
-- Fader parameter ID and wire representation.
+- Mix-fader upper limit and quantization.
 - Complete `mprm` object schema and update semantics.
 - Meaning of the `0x00000000` object used by generic parameters.
 - Valid ranges and quantization rules for reverb send, channel gain, and pan.

@@ -2716,6 +2716,7 @@ dependencies = [
  "anyhow",
  "binrw",
  "derive_more",
+ "enum-map",
  "modular-bitfield",
  "serde",
  "serde_ub_json",

@@ -19,8 +19,8 @@ pub mod state;
 
 use crate::device_state::Command::Set;
 use crate::device_state::{
-    BoolParameters, FloatParameters, Parameter, ParameterGroup, ParameterValue, State,
-    UIntParameters, device_model,
+    BoolParameters, ChoiceParameters, FloatParameters, Parameter, ParameterGroup, ParameterValue,
+    State, UIntParameters, device_model,
 };
 use eframe::egui::Slider;
 use eframe::{Frame, egui};
@@ -85,7 +85,29 @@ fn parameter_group(
                                     &mut device_state.floats[*float_parameter],
                                     spec.min..=spec.max,
                                 )
-                                .text(*label),
+                                    .text(*label),
+                            )
+                            .changed()
+                        {
+                            sender
+                                .send(Set(ParameterValue::Float(
+                                    *float_parameter,
+                                    device_state.floats[*float_parameter],
+                                )))
+                                .unwrap();
+                        }
+                    }
+                    Parameter::Fader(float_parameter, label) => {
+                        let spec = float_parameter.spec();
+                        if ui
+                            .add(
+                                Slider::new(
+                                    &mut device_state.floats[*float_parameter],
+                                    spec.min..=spec.max,
+                                )
+                                    .vertical()
+                                    .text(*label)
+                                    .suffix(" dB"),
                             )
                             .changed()
                         {
@@ -104,10 +126,6 @@ fn parameter_group(
                             egui::ProgressBar::new(meter_fill(value))
                                 .text(format!("{label}: {dbfs:.1} dBFS")),
                         );
-                    }
-                    Parameter::Value(float_parameter, label) => {
-                        let value = device_state.floats[*float_parameter];
-                        ui.label(format!("{label}: {value:.2}"));
                     }
                     Parameter::UIntValue(uint_parameter, label) => {
                         let value = device_state.uints[*uint_parameter];
@@ -129,6 +147,34 @@ fn parameter_group(
                         {
                             sender
                                 .send(Set(ParameterValue::Bool(*bool_parameter, !value)))
+                                .unwrap();
+                        }
+                    }
+                    Parameter::Choice(choice_parameter, label, choices) => {
+                        let value = &mut device_state.choices[*choice_parameter];
+                        let selected = choices
+                            .iter()
+                            .find(|choice| choice.value == *value)
+                            .map_or("Unknown", |choice| choice.label);
+                        let mut selection = None;
+
+                        egui::ComboBox::from_id_salt((group.name, *label))
+                            .selected_text(format!("{label}: {selected}"))
+                            .show_ui(ui, |ui| {
+                                for choice in *choices {
+                                    if ui
+                                        .selectable_label(*value == choice.value, choice.label)
+                                        .clicked()
+                                    {
+                                        *value = choice.value;
+                                        selection = Some(choice.value);
+                                    }
+                                }
+                            });
+
+                        if let Some(value) = selection {
+                            sender
+                                .send(Set(ParameterValue::Choice(*choice_parameter, value)))
                                 .unwrap();
                         }
                     }
@@ -154,11 +200,36 @@ fn meter_level_to_dbfs(level: f32) -> f32 {
     20.0 * level.log10()
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct DeviceState {
     floats: EnumMap<FloatParameters, f32>,
     bools: EnumMap<BoolParameters, bool>,
     uints: EnumMap<UIntParameters, u32>,
+    choices: EnumMap<ChoiceParameters, u32>,
+}
+
+impl Default for DeviceState {
+    fn default() -> Self {
+        let mut state = Self {
+            floats: Default::default(),
+            bools: Default::default(),
+            uints: Default::default(),
+            choices: Default::default(),
+        };
+        state.floats[FloatParameters::Pan(0)] = 0.5;
+        state.floats[FloatParameters::Pan(1)] = 0.5;
+        state.floats[FloatParameters::ReverbSend(0)] = -96.0;
+        state.floats[FloatParameters::ReverbSend(1)] = -96.0;
+        for bus in 0..=2 {
+            for source in 0..=5 {
+                state.floats[FloatParameters::MixFader(bus, source.into())] = 0.0;
+            }
+        }
+        state.choices[ChoiceParameters::MonitorSource()] = u32::MAX;
+        state.choices[ChoiceParameters::ProcessingOrder(0)] = u32::MAX;
+        state.choices[ChoiceParameters::ProcessingOrder(1)] = u32::MAX;
+        state
+    }
 }
 
 struct App {
@@ -179,6 +250,9 @@ fn update_param(state: &mut DeviceState, param: ParameterValue) {
         }
         ParameterValue::UInt(uint_param, value) => {
             state.uints[uint_param] = value;
+        }
+        ParameterValue::Choice(choice_param, value) => {
+            state.choices[choice_param] = value;
         }
     }
 }

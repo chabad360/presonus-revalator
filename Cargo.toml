@@ -17,3 +17,4 @@ modular-bitfield = "0.13.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_ubj = { version = "0.2.0", default-features = true}
 serde_ub_json = "0.1.0"
+enum-map = "3.1.0"
