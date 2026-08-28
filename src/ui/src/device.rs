@@ -270,16 +270,16 @@ mod tests {
                 7,
                 ParameterValue::Bool(BoolParameters::PhantomPower(channel), true),
             )
-                .unwrap()
-                .to_bytes()
-                .unwrap();
+            .unwrap()
+            .to_bytes()
+            .unwrap();
             let disabled = param_to_msg(
                 7,
                 ParameterValue::Bool(BoolParameters::PhantomPower(channel), false),
             )
-                .unwrap()
-                .to_bytes()
-                .unwrap();
+            .unwrap()
+            .to_bytes()
+            .unwrap();
 
             assert_pari(&enabled, channel.into(), 0, 1);
             assert_pari(&disabled, channel.into(), 0, 0);
@@ -309,7 +309,7 @@ mod tests {
             11,
             ParameterValue::Bool(BoolParameters::LinkedPresetEnabled(), true),
         )
-            .unwrap();
+        .unwrap();
         let bytes = messages
             .iter()
             .map(Message::to_bytes)
@@ -345,16 +345,16 @@ mod tests {
             7,
             ParameterValue::Bool(BoolParameters::PresetEnabled(1), true),
         )
-            .unwrap()
-            .to_bytes()
-            .unwrap();
+        .unwrap()
+        .to_bytes()
+        .unwrap();
         let disabled = param_to_msg(
             7,
             ParameterValue::Bool(BoolParameters::PresetEnabled(1), false),
         )
-            .unwrap()
-            .to_bytes()
-            .unwrap();
+        .unwrap()
+        .to_bytes()
+        .unwrap();
 
         assert_eq!(enabled.len(), disabled.len());
         assert_eq!(

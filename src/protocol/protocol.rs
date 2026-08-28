@@ -1,4 +1,7 @@
-pub use super::payload::Payload;
+use crate::protocol::payload::{
+    ApplPayload, BusPayload, CompressorPayload, DefaultPayload, EqPayload, FilterPayload,
+    GatePayload, LimiterPayload, OptPayload, ReverbPayload, UnknownPayload, VocalEffectPayload,
+};
 use binrw::{BinRead, BinResult, BinWrite};
 use std::io::Cursor;
 
@@ -15,36 +18,36 @@ pub enum Verb {
     Unknown([u8; 4]),
 }
 
-#[derive(Debug, Clone, Copy, BinWrite, BinRead, Eq, PartialEq)]
+#[derive(Debug, Clone, BinWrite, BinRead, PartialEq)]
 pub enum Target {
     #[brw(magic(b"lppA"))]
-    Appl(Selector),
+    Appl(Selector, ApplPayload),
 
     #[brw(magic(0u32))]
-    None(Selector),
+    Default(Selector, DefaultPayload),
     #[brw(magic(b"pmoc"))]
-    Comp(Channel),
+    Compressor(Channel, CompressorPayload),
     #[brw(magic(b" tpo"))]
-    Opt(Channel),
+    Opt(Channel, OptPayload),
     #[brw(magic(b"  qe"))]
-    Eq(Channel),
+    Eq(Channel, EqPayload),
     #[brw(magic(b" mil"))]
-    Lim(Channel),
+    Limiter(Channel, LimiterPayload),
     #[brw(magic(b"etag"))]
-    Gate(Channel),
+    Gate(Channel, GatePayload),
     #[brw(magic(b"tlif"))]
-    Filt(Channel),
+    Filter(Channel, FilterPayload),
 
     #[brw(magic(0x000000CAu32))]
-    _CA(u32),
+    Reverb(Selector, ReverbPayload),
     #[brw(magic(0x000000C9u32))]
-    VocalEffect(Channel),
+    VocalEffect(Channel, VocalEffectPayload),
     #[brw(magic(b"\0\0\0@"))]
-    At(u32),
+    At(u32, UnknownPayload),
     #[brw(magic(100u32))]
-    Bus(Bus),
+    Bus(Bus, BusPayload),
 
-    Unknown(u32, u32),
+    Unknown(u32, u32, UnknownPayload),
 }
 
 #[derive(Debug, Clone, Copy, BinWrite, BinRead, Default)]
@@ -92,15 +95,14 @@ pub struct Body {
     pub object: Target,
     // pub Bus: Bus,
     // #[brw(pad_before(4))]
-    pub payload: Payload,
+    // pub payload: Payload,
 }
-
 
 #[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq, Eq, Default)]
 #[brw(repr = u32)]
 pub enum Selector {
     #[default]
-    None
+    None,
 }
 
 #[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq, Eq)]

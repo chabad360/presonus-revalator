@@ -1,8 +1,10 @@
-use crate::device_state::{BoolParameters, Command, FloatParameters, ParameterValue, State, jast_parameter_values};
+use crate::device_state::{
+    BoolParameters, Command, FloatParameters, ParameterValue, State, jast_parameter_values,
+};
 use binrw::BinRead;
 use nusb::{MaybeFuture, list_devices};
 use pcap::Device;
-use presonus_revalator::protocol::payload::{ParaParameter, PariParameter, Payload};
+use presonus_revalator::protocol::payload::{ApplParaParameter, ApplPariParameter, ApplPayload};
 use presonus_revalator::protocol::protocol::{Message, Target};
 use std::io::{Cursor, Error, ErrorKind};
 use std::sync::mpsc;
@@ -80,102 +82,49 @@ fn bulk_message_data(packet: &[u8]) -> Option<&[u8]> {
 fn message_to_state(message: Message) -> Option<State> {
     let body = message.body?;
 
-    if !(matches!(body.object, Target::Appl(_) ) && (body.payload == Payload::AskJaSt || matches!(body.payload, Payload::JaSt { .. } ) || matches!(body.payload, Payload::MemP { .. }))) {
-        println!("{body:?}")
+    if !matches!(
+        &body.object,
+        Target::Appl(
+            _,
+            ApplPayload::AskJaSt | ApplPayload::JaSt(_) | ApplPayload::MemP { .. }
+        )
+    ) {
+        println!("{body:?}");
     }
 
-    match body.payload {
-        Payload::JaSt(payload) => Some(State::UpdateMany(jast_parameter_values(payload))),
-        Payload::Para {
-            channel,
-            data,
-        } => {
-            match data {
-                ParaParameter::Gain { value } => Some(State::Update(ParameterValue::Float(
-                    FloatParameters::Gain(channel as u8),
-                    value,
-                ))),
-                ParaParameter::ProcessingOrder { raw_value } => {
-                    // eprintln!("ProcesingOrder: {raw_value}");
-                    None
-                }
-                ParaParameter::ReverbSend { value } => {
-                    // eprintln!("ReverbSend: {value}");
-                    None
-                }
-                ParaParameter::Pan { value } => {
-                    // eprintln!("Pan: {value}");
-                    None
-                }
-                ParaParameter::Preset { enabled } => Some(State::Update(ParameterValue::Bool(
-                    BoolParameters::PresetEnabled(channel as u8),
-                    enabled,
-                ))),
-                ParaParameter::Blend { .. } => None,
-                ParaParameter::Unknown { id, value } => {
-                    // eprintln!("Unknown Para: {id}: {value}");
-                    None
-                }
-                ParaParameter::OutputDelay { .. } => None
-            }
+    match body.object {
+        Target::Appl(_, ApplPayload::JaSt(payload)) => {
+            Some(State::UpdateMany(jast_parameter_values(payload)))
         }
-        Payload::Pari {
-            channel,
-            data
-        } => {
-            match data {
-                PariParameter::PhantomPower { enabled } => Some(State::Update(ParameterValue::Bool(
-                    BoolParameters::PhantomPower(channel as u8),
-                    enabled,
-                ))),
-                PariParameter::MixMono { enabled } => None,
-                PariParameter::ChannelLink { enabled } => Some(State::Update(ParameterValue::Bool(
-                    BoolParameters::ChannelLink(),
-                    enabled,
-                ))),
-                PariParameter::MonitorSource { source } => {
-                    // eprintln!("MonitorSource: {source:#?}");
-                    None
-                }
-                PariParameter::Unknown { id, value } => {
-                    // eprintln!("Unknown Pari: {id}: {value}");
-                    None
-                }
-                PariParameter::USBFatChannel { .. } => None,
-                PariParameter::DelayChannel { .. } => None,
-                PariParameter::DualPreset { .. } => None,
-                PariParameter::Preset { .. } => None,
-            }
-        }
-        _ => None
-        // Payload::AskJaSt | Payload::None => None,
-
-        // other => {
-        //     eprintln!("Unexpected payload in usbmon message: {other:#?}");
-        //     None
-        // }
-        // //
-        // // Payload::MemP { size, data }
-        // // | Payload::MBdf { size, data }
-        // // | Payload::Bqdf { size, data }
-        // // | Payload::Lfdf { size, data }
-        // // | Payload::MLff { size, data }
-        // // | Payload::Gate { size, data }
-        // // | Payload::Cpxt { size, data }
-        // // | Payload::Lim { size, data } => {
-        // //     let name = match body.payload {
-        // //         Payload::MemP { .. } => "MemP",
-        // //         Payload::MBdf { .. } => "MBdf",
-        // //         Payload::Bqdf { .. } => "Bqdf",
-        // //         Payload::Lfdf { .. } => "Lfdf",
-        // //         Payload::MLff { .. } => "MLff",
-        // //         Payload::Gate { .. } => "Gate",
-        // //         Payload::Cpxt { .. } => "Cpxt",
-        // //         Payload::Lim { .. } => "Lim",
-        // //         _ => unreachable!(),
-        // //     };
-        // //     eprintln!("{name}: size={size}, data={data:?}");
-        // //     None
-        // // }
+        Target::Appl(_, ApplPayload::Para { channel, data }) => match data {
+            ApplParaParameter::Gain { value } => Some(State::Update(ParameterValue::Float(
+                FloatParameters::Gain(channel as u8),
+                value,
+            ))),
+            ApplParaParameter::Preset { enabled } => Some(State::Update(ParameterValue::Bool(
+                BoolParameters::PresetEnabled(channel as u8),
+                enabled,
+            ))),
+            ApplParaParameter::Blend { .. }
+            | ApplParaParameter::OutputDelay { .. }
+            | ApplParaParameter::Unknown { .. } => None,
+            ApplParaParameter::PhonesOut { .. } => None,
+            ApplParaParameter::MainOut { .. } => None,
+        },
+        Target::Appl(_, ApplPayload::Pari { channel, data }) => match data {
+            ApplPariParameter::PhantomPower { enabled } => Some(State::Update(
+                ParameterValue::Bool(BoolParameters::PhantomPower(channel as u8), enabled),
+            )),
+            ApplPariParameter::ChannelLink { enabled } => Some(State::Update(
+                ParameterValue::Bool(BoolParameters::ChannelLink(), enabled),
+            )),
+            ApplPariParameter::MonitorSource { .. }
+            | ApplPariParameter::DelayChannel { .. }
+            | ApplPariParameter::DualPreset { .. }
+            | ApplPariParameter::Preset { .. }
+            | ApplPariParameter::Unknown { .. } => None,
+            ApplPariParameter::VoiceEffects { .. } => None,
+        },
+        _ => None,
     }
 }
