@@ -1,50 +1,28 @@
-use crate::{ValueScale, snap_to_notch};
-use egui::{
-    Color32, DragValue, FontId, Key, Pos2, Rect, Response, Sense, Stroke, Ui, Vec2, Widget,
-};
+use crate::{ValueScale, control::ControlValue};
+use egui::{Color32, FontId, Pos2, Rect, Response, Sense, Stroke, Ui, Vec2, Widget};
 use std::ops::RangeInclusive;
 
 /// A vertical audio fader with linear, logarithmic, or audio-taper value mapping.
 #[must_use = "You should put this widget in a ui with `ui.add(widget);`"]
 pub struct Fader<'a> {
-    value: &'a mut f32,
-    range: RangeInclusive<f32>,
-    scale: ValueScale,
+    control: ControlValue<'a>,
     text: Option<String>,
-    prefix: String,
-    suffix: String,
     size: Vec2,
-    reset_value: Option<f32>,
-    decimals: usize,
     decibels: bool,
-    formatter: Option<Box<dyn 'a + Fn(f64, RangeInclusive<usize>) -> String>>,
-    parser: Option<Box<dyn 'a + Fn(&str) -> Option<f64>>>,
-    notches: Vec<f32>,
-    notch_tolerance: f32,
 }
 
 impl<'a> Fader<'a> {
     pub fn new(value: &'a mut f32, range: RangeInclusive<f32>) -> Self {
         Self {
-            value,
-            range,
-            scale: ValueScale::Linear,
+            control: ControlValue::new(value, range),
             text: None,
-            prefix: String::new(),
-            suffix: String::new(),
             size: Vec2::new(96.0, 220.0),
-            reset_value: None,
-            decimals: 1,
             decibels: false,
-            formatter: None,
-            parser: None,
-            notches: Vec::new(),
-            notch_tolerance: 0.025,
         }
     }
 
     pub fn scale(mut self, scale: ValueScale) -> Self {
-        self.scale = scale;
+        self.control.set_scale(scale);
         self.decibels = false;
         self
     }
@@ -52,9 +30,9 @@ impl<'a> Fader<'a> {
     /// Treats the stored value as decibels, applies an audio fader taper, and
     /// draws common mixer-fader tick marks.
     pub fn decibels(mut self) -> Self {
-        self.scale = ValueScale::AudioTaper;
+        self.control.set_scale(ValueScale::AudioTaper);
         self.decibels = true;
-        self.suffix = " dB".to_owned();
+        self.control.set_suffix(" dB".to_owned());
         self
     }
 
@@ -64,12 +42,12 @@ impl<'a> Fader<'a> {
     }
 
     pub fn prefix(mut self, prefix: impl Into<String>) -> Self {
-        self.prefix = prefix.into();
+        self.control.set_prefix(prefix.into());
         self
     }
 
     pub fn suffix(mut self, suffix: impl Into<String>) -> Self {
-        self.suffix = suffix.into();
+        self.control.set_suffix(suffix.into());
         self
     }
 
@@ -79,12 +57,12 @@ impl<'a> Fader<'a> {
     }
 
     pub fn reset_value(mut self, value: f32) -> Self {
-        self.reset_value = Some(value);
+        self.control.set_reset_value(value);
         self
     }
 
     pub fn decimals(mut self, decimals: usize) -> Self {
-        self.decimals = decimals;
+        self.control.set_decimals(decimals);
         self
     }
 
@@ -92,27 +70,27 @@ impl<'a> Fader<'a> {
         mut self,
         formatter: impl 'a + Fn(f64, RangeInclusive<usize>) -> String,
     ) -> Self {
-        self.formatter = Some(Box::new(formatter));
+        self.control.set_formatter(formatter);
         self
     }
 
     pub fn custom_parser(mut self, parser: impl 'a + Fn(&str) -> Option<f64>) -> Self {
-        self.parser = Some(Box::new(parser));
+        self.control.set_parser(parser);
         self
     }
 
     pub fn notch(mut self, value: f32) -> Self {
-        self.notches.push(value);
+        self.control.add_notch(value);
         self
     }
 
     pub fn notches(mut self, values: impl IntoIterator<Item = f32>) -> Self {
-        self.notches.extend(values);
+        self.control.add_notches(values);
         self
     }
 
     pub fn notch_tolerance(mut self, tolerance: f32) -> Self {
-        self.notch_tolerance = tolerance.max(0.0);
+        self.control.set_notch_tolerance(tolerance);
         self
     }
 }
@@ -120,20 +98,10 @@ impl<'a> Fader<'a> {
 impl Widget for Fader<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         let Self {
-            value,
-            range,
-            scale,
+            mut control,
             text,
-            prefix,
-            suffix,
             size,
-            reset_value,
-            decimals,
             decibels,
-            formatter,
-            parser,
-            notches,
-            notch_tolerance,
         } = self;
         let (rect, outer_response) = ui.allocate_exact_size(size, Sense::hover());
         let label_height = if text.is_some() { 20.0 } else { 4.0 };
@@ -148,78 +116,31 @@ impl Widget for Fader<'_> {
             Sense::click_and_drag(),
         );
 
-        if response.clicked() {
-            response.request_focus();
-        }
+        control.focus_on_click(&response);
         let fine = ui.input(|input| input.modifiers.shift);
-        if response.double_clicked()
-            && let Some(reset_value) = reset_value
-        {
-            let reset_value = reset_value.clamp(*range.start(), *range.end());
-            if reset_value != *value {
-                *value = reset_value;
-                response.mark_changed();
-            }
+        if control.reset_on_double_click(&mut response) {
+            // A configured reset takes precedence over either drag mode.
         } else if fine {
             if response.dragged() {
                 let delta = ui.input(|input| input.pointer.delta());
-                let normalized = scale.normalize(*value, &range) - delta.y / 800.0;
-                let new_value = snap_to_notch(
-                    scale.denormalize(normalized, &range),
-                    scale,
-                    &range,
-                    &notches,
-                    notch_tolerance,
-                );
-                if new_value != *value {
-                    *value = new_value;
-                    response.mark_changed();
-                }
+                let normalized = control.normalized_value() - delta.y / 800.0;
+                control.update_normalized_value(normalized, &mut response);
             }
         } else if (response.dragged() || response.clicked())
             && let Some(pointer) = response.interact_pointer_pos()
         {
             let normalized = egui::remap_clamp(pointer.y, track.bottom()..=track.top(), 0.0..=1.0);
-            let new_value = snap_to_notch(
-                scale.denormalize(normalized, &range),
-                scale,
-                &range,
-                &notches,
-                notch_tolerance,
-            );
-            if new_value != *value {
-                *value = new_value;
-                response.mark_changed();
-            }
+            control.update_normalized_value(normalized, &mut response);
         }
 
-        if response.has_focus() {
-            let direction = ui.input(|input| {
-                i8::from(input.key_pressed(Key::ArrowUp) || input.key_pressed(Key::ArrowRight))
-                    - i8::from(
-                        input.key_pressed(Key::ArrowDown) || input.key_pressed(Key::ArrowLeft),
-                    )
-            });
-            if direction != 0 {
-                let step = if fine { 0.001 } else { 0.01 };
-                let normalized = scale.normalize(*value, &range) + f32::from(direction) * step;
-                *value = snap_to_notch(
-                    scale.denormalize(normalized, &range),
-                    scale,
-                    &range,
-                    &notches,
-                    notch_tolerance,
-                );
-                response.mark_changed();
-            }
-        }
+        control.handle_keyboard(ui, &mut response, fine);
 
-        let visuals = ui.style().interact(&response).clone();
+        let visuals = *ui.style().interact(&response);
         let painter = ui.painter_at(rect);
         painter.rect_filled(track, 3.0, ui.visuals().extreme_bg_color);
         painter.rect_stroke(track, 3.0, visuals.bg_stroke, egui::StrokeKind::Inside);
 
-        let normalized = scale.normalize(*value, &range);
+        let normalized = control.normalized_value();
         let thumb_y = egui::lerp(track.bottom()..=track.top(), normalized);
         let filled = Rect::from_min_max(
             Pos2::new(track.left(), thumb_y),
@@ -228,16 +149,16 @@ impl Widget for Fader<'_> {
         painter.rect_filled(filled, 3.0, ui.visuals().selection.bg_fill);
 
         if decibels {
-            paint_decibel_ticks(ui, &painter, track, scale, &range);
+            paint_decibel_ticks(ui, &painter, track, control.scale(), control.range());
         } else {
-            paint_general_ticks(ui, &painter, track, scale, &range);
+            paint_general_ticks(ui, &painter, track, control.scale(), control.range());
         }
         paint_notches(
             &painter,
             track,
-            scale,
-            &range,
-            &notches,
+            control.scale(),
+            control.range(),
+            control.notches(),
             visuals.fg_stroke.color,
         );
 
@@ -266,29 +187,12 @@ impl Widget for Fader<'_> {
             Pos2::new(rect.center().x, rect.top() + value_height * 0.5),
             Vec2::new(76.0, value_height),
         );
-        let mut value_widget = DragValue::new(value)
-            .range(range.clone())
-            .fixed_decimals(decimals)
-            .prefix(prefix)
-            .suffix(suffix);
-        if let Some(formatter) = formatter {
-            value_widget = value_widget.custom_formatter(formatter);
-        }
-        if let Some(parser) = parser {
-            value_widget = value_widget.custom_parser(parser);
-        }
-        let mut value_ui = ui.new_child(
-            egui::UiBuilder::new()
-                .id_salt(outer_response.id.with("value"))
-                .max_rect(value_rect)
-                .layout(egui::Layout::centered_and_justified(
-                    egui::Direction::LeftToRight,
-                )),
+        let value_response = control.add_editable(
+            ui,
+            outer_response.id.with("value"),
+            value_rect,
+            &mut response,
         );
-        let value_response = value_ui.add_sized(value_rect.size(), value_widget);
-        if value_response.changed() {
-            response.mark_changed();
-        }
 
         if let Some(text) = text {
             painter.text(

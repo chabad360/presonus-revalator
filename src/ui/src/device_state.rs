@@ -1,6 +1,9 @@
 use crate::define_parameter_kind;
 use crate::state::ParameterKind;
+use egui_audio_controls::ValueScale;
+use enum_map::Enum;
 use presonus_revalator::protocol::payload::{JaSt, MixChannel};
+use presonus_revalator::protocol::protocol::Bus;
 
 #[derive(Debug, Clone)]
 pub struct DeviceModel {
@@ -138,33 +141,13 @@ float_parameters! {
     }
 }
 
-impl FloatParameters {
-    /// Whether this parameter is stored in decibels rather than a linear unit.
-    pub fn is_decibels(self) -> bool {
-        return false;
-        matches!(
-            self,
-            Self::HeadphonesGain()
-                | Self::Gain(_)
-                | Self::ReverbSend(_)
-                | Self::MixFader(_, _)
-        )
-    }
-
-    pub fn is_percentage(self) -> bool {
-        matches!(self, Self::MainGain())
-    }
-
-    pub fn is_reduction_meter(self) -> bool {
-        matches!(self, Self::Gate(_) | Self::Compressor(_) | Self::Limiter(_))
-    }
-}
-
 bool_parameters! {
     PresetEnabled(_channel: u8) {},
     LinkedPresetEnabled() {},
     PhantomPower(_channel: u8) {},
     Clipping(_channel: u8) {},
+    InputClipping(_channel: MixChannel, _side: u8) {},
+    OutputClipping(_bus: Bus, _side: u8) {},
     ChannelLink() {},
     MixMono(_bus: u8) {}
 }
@@ -178,6 +161,12 @@ u_int_parameters! {
 choice_parameters! {
     MonitorSource() {},
     ProcessingOrder(_channel: u8) {}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
+pub enum Channel {
+    Input(MixChannel),
+    Output(Bus),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -220,12 +209,166 @@ pub enum ParameterValue {
     Choice(ChoiceParameters, u32),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueDisplay {
+    Number {
+        prefix: &'static str,
+        suffix: &'static str,
+        decimals: usize,
+    },
+    Percentage {
+        decimals: usize,
+    },
+}
+
+impl Default for ValueDisplay {
+    fn default() -> Self {
+        Self::Number {
+            prefix: "",
+            suffix: "",
+            decimals: 1,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct KnobParameter {
+    pub parameter: FloatParameters,
+    pub label: &'static str,
+    pub scale: ValueScale,
+    pub display: ValueDisplay,
+    pub notches: Vec<f32>,
+    pub reset_value: Option<f32>,
+}
+
+impl KnobParameter {
+    fn new(parameter: FloatParameters, label: &'static str) -> Self {
+        Self {
+            parameter,
+            label,
+            scale: ValueScale::Linear,
+            display: ValueDisplay::default(),
+            notches: Vec::new(),
+            reset_value: None,
+        }
+    }
+
+    fn decibels(mut self) -> Self {
+        self.display = ValueDisplay::Number {
+            prefix: "",
+            suffix: " dB",
+            decimals: 1,
+        };
+        self
+    }
+
+    fn percentage(mut self) -> Self {
+        self.display = ValueDisplay::Percentage { decimals: 0 };
+        self
+    }
+
+    fn notch(mut self, value: f32) -> Self {
+        self.notches.push(value);
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FaderParameter {
+    pub parameter: FloatParameters,
+    pub label: &'static str,
+    pub display: ValueDisplay,
+    pub decibel_taper: bool,
+    pub notches: Vec<f32>,
+    pub reset_value: Option<f32>,
+}
+
+impl FaderParameter {
+    fn decibels(parameter: FloatParameters, label: &'static str) -> Self {
+        Self {
+            parameter,
+            label,
+            display: ValueDisplay::Number {
+                prefix: "",
+                suffix: " dB",
+                decimals: 1,
+            },
+            decibel_taper: true,
+            notches: vec![0.0],
+            reset_value: Some(0.0),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MeterInput {
+    LinearAmplitude,
+    Decibels,
+}
+
+#[derive(Debug, Clone)]
+pub struct MeterChannel {
+    pub parameter: FloatParameters,
+    pub clipping: Option<BoolParameters>,
+    pub name: Option<&'static str>,
+}
+
+impl MeterChannel {
+    fn new(parameter: FloatParameters) -> Self {
+        Self {
+            parameter,
+            clipping: None,
+            name: None,
+        }
+    }
+
+    fn clipping(mut self, clipping: BoolParameters) -> Self {
+        self.clipping = Some(clipping);
+        self
+    }
+
+    fn named(mut self, name: &'static str) -> Self {
+        self.name = Some(name);
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MeterParameter {
+    pub channels: Vec<MeterChannel>,
+    pub label: &'static str,
+    pub input: MeterInput,
+    pub inverted: bool,
+    pub range_db: (f32, f32),
+}
+
+impl MeterParameter {
+    fn level(channels: Vec<MeterChannel>, label: &'static str) -> Self {
+        Self {
+            channels,
+            label,
+            input: MeterInput::LinearAmplitude,
+            inverted: false,
+            range_db: (-60.0, 6.0),
+        }
+    }
+
+    fn reduction(channels: Vec<MeterChannel>, label: &'static str) -> Self {
+        Self {
+            channels,
+            label,
+            input: MeterInput::LinearAmplitude,
+            inverted: true,
+            range_db: (-60.0, 0.0),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Parameter {
-    Knob(FloatParameters, &'static str),
-    Fader(FloatParameters, &'static str),
-    Meter(Vec<(FloatParameters, Option<BoolParameters>)>, &'static str),
-    InvertedMeter(Vec<FloatParameters>, &'static str),
+    Knob(KnobParameter),
+    Fader(FaderParameter),
+    Meter(MeterParameter),
     UIntValue(UIntParameters, &'static str),
     Indicator(BoolParameters, &'static str),
     Button(BoolParameters, &'static str),
@@ -242,18 +385,40 @@ pub fn device_model() -> DeviceModel {
                     Parameter::UIntValue(UIntParameters::ActivityMask(0), "Activity mask"),
                     Parameter::Button(BoolParameters::PresetEnabled(0), "Preset"),
                     Parameter::Button(BoolParameters::PhantomPower(0), "48 V"),
-                    Parameter::Knob(FloatParameters::Gain(0), "Gain"),
-                    Parameter::Knob(FloatParameters::Pan(0), "Pan (L–C–R)"),
-                    Parameter::Knob(FloatParameters::ReverbSend(0), "Reverb send (dB)"),
+                    Parameter::Knob(
+                        KnobParameter::new(FloatParameters::Gain(0), "Gain").decibels(),
+                    ),
+                    Parameter::Knob(
+                        KnobParameter::new(FloatParameters::Pan(0), "Pan (L–C–R)").notch(0.5),
+                    ),
+                    Parameter::Knob(
+                        KnobParameter::new(FloatParameters::ReverbSend(0), "Reverb send (dB)")
+                            .decibels(),
+                    ),
                     Parameter::Choice(
                         ChoiceParameters::ProcessingOrder(0),
                         "Processing order",
                         PROCESSING_ORDERS,
                     ),
-                    Parameter::Meter(vec![(FloatParameters::ChannelLevel(0), Some(BoolParameters::Clipping(0)))], "Level"),
-                    Parameter::InvertedMeter(vec![FloatParameters::Gate(0)], "Gate"),
-                    Parameter::InvertedMeter(vec![FloatParameters::Compressor(0)], "Compressor"),
-                    Parameter::InvertedMeter(vec![FloatParameters::Limiter(0)], "Limiter"),
+                    Parameter::Meter(MeterParameter::level(
+                        vec![
+                            MeterChannel::new(FloatParameters::ChannelLevel(0))
+                                .clipping(BoolParameters::InputClipping(MixChannel::Channel1, 0)),
+                        ],
+                        "Level",
+                    )),
+                    Parameter::Meter(MeterParameter::reduction(
+                        vec![MeterChannel::new(FloatParameters::Gate(0))],
+                        "Gate",
+                    )),
+                    Parameter::Meter(MeterParameter::reduction(
+                        vec![MeterChannel::new(FloatParameters::Compressor(0))],
+                        "Compressor",
+                    )),
+                    Parameter::Meter(MeterParameter::reduction(
+                        vec![MeterChannel::new(FloatParameters::Limiter(0))],
+                        "Limiter",
+                    )),
                 ],
             },
             ParameterGroup {
@@ -264,19 +429,40 @@ pub fn device_model() -> DeviceModel {
                     Parameter::Button(BoolParameters::PresetEnabled(1), "Preset"),
                     Parameter::Button(BoolParameters::PhantomPower(1), "48 V"),
                     Parameter::Button(BoolParameters::ChannelLink(), "Channel link"),
-                    Parameter::Knob(FloatParameters::Gain(1), "Gain"),
-                    Parameter::Knob(FloatParameters::Pan(1), "Pan (L–C–R)"),
-                    Parameter::Knob(FloatParameters::ReverbSend(1), "Reverb send (dB)"),
+                    Parameter::Knob(
+                        KnobParameter::new(FloatParameters::Gain(1), "Gain").decibels(),
+                    ),
+                    Parameter::Knob(
+                        KnobParameter::new(FloatParameters::Pan(1), "Pan (L–C–R)").notch(0.5),
+                    ),
+                    Parameter::Knob(
+                        KnobParameter::new(FloatParameters::ReverbSend(1), "Reverb send (dB)")
+                            .decibels(),
+                    ),
                     Parameter::Choice(
                         ChoiceParameters::ProcessingOrder(1),
                         "Processing order",
                         PROCESSING_ORDERS,
                     ),
-                    Parameter::Meter(vec![(FloatParameters::ChannelLevel(1), Some(BoolParameters::Clipping(1)))], "Level"),
-                    Parameter::Meter(vec![(FloatParameters::Channel2Side(0), None), (FloatParameters::Channel2Side(1), None)], "Left"),
-                    Parameter::InvertedMeter(vec![FloatParameters::Gate(1)], "Gate"),
-                    Parameter::InvertedMeter(vec![FloatParameters::Compressor(1)], "Compressor"),
-                    Parameter::InvertedMeter(vec![FloatParameters::Limiter(1)], "Limiter"),
+                    Parameter::Meter(MeterParameter::level(
+                        vec![
+                            MeterChannel::new(FloatParameters::ChannelLevel(1))
+                                .clipping(BoolParameters::InputClipping(MixChannel::Channel2, 0)),
+                        ],
+                        "Level",
+                    )),
+                    Parameter::Meter(MeterParameter::reduction(
+                        vec![MeterChannel::new(FloatParameters::Gate(1))],
+                        "Gate",
+                    )),
+                    Parameter::Meter(MeterParameter::reduction(
+                        vec![MeterChannel::new(FloatParameters::Compressor(1))],
+                        "Compressor",
+                    )),
+                    Parameter::Meter(MeterParameter::reduction(
+                        vec![MeterChannel::new(FloatParameters::Limiter(1))],
+                        "Limiter",
+                    )),
                 ],
             },
             ParameterGroup {
@@ -289,12 +475,26 @@ pub fn device_model() -> DeviceModel {
                     Parameter::Button(BoolParameters::PhantomPower(0), "48 V 1"),
                     Parameter::Button(BoolParameters::PhantomPower(1), "48 V 2"),
                     Parameter::Button(BoolParameters::ChannelLink(), "Channel link"),
-                    Parameter::Knob(FloatParameters::Gain(0), "Gain 1"),
-                    Parameter::Knob(FloatParameters::Gain(1), "Gain 2"),
-                    Parameter::Knob(FloatParameters::Pan(0), "Pan 1 (L–C–R)"),
-                    Parameter::Knob(FloatParameters::Pan(1), "Pan 2 (L–C–R)"),
-                    Parameter::Knob(FloatParameters::ReverbSend(0), "Reverb send 1 (dB)"),
-                    Parameter::Knob(FloatParameters::ReverbSend(1), "Reverb send 2 (dB)"),
+                    Parameter::Knob(
+                        KnobParameter::new(FloatParameters::Gain(0), "Gain 1").decibels(),
+                    ),
+                    Parameter::Knob(
+                        KnobParameter::new(FloatParameters::Gain(1), "Gain 2").decibels(),
+                    ),
+                    Parameter::Knob(
+                        KnobParameter::new(FloatParameters::Pan(0), "Pan 1 (L–C–R)").notch(0.5),
+                    ),
+                    Parameter::Knob(
+                        KnobParameter::new(FloatParameters::Pan(1), "Pan 2 (L–C–R)").notch(0.5),
+                    ),
+                    Parameter::Knob(
+                        KnobParameter::new(FloatParameters::ReverbSend(0), "Reverb send 1 (dB)")
+                            .decibels(),
+                    ),
+                    Parameter::Knob(
+                        KnobParameter::new(FloatParameters::ReverbSend(1), "Reverb send 2 (dB)")
+                            .decibels(),
+                    ),
                     Parameter::Choice(
                         ChoiceParameters::ProcessingOrder(0),
                         "Processing order 1",
@@ -305,10 +505,38 @@ pub fn device_model() -> DeviceModel {
                         "Processing order 2",
                         PROCESSING_ORDERS,
                     ),
-                    Parameter::Meter(vec![(FloatParameters::Channel2Side(0), Some(BoolParameters::Clipping(0))), (FloatParameters::Channel2Side(1), Some(BoolParameters::Clipping(1)))], "Left"),
-                    Parameter::InvertedMeter(vec![FloatParameters::Gate(0), FloatParameters::Gate(1)], "Gate 1"),
-                    Parameter::InvertedMeter(vec![FloatParameters::Compressor(0), FloatParameters::Compressor(1)], "Compressor 1"),
-                    Parameter::InvertedMeter(vec![FloatParameters::Limiter(0), FloatParameters::Limiter(1)], "Limiter 1"),
+                    Parameter::Meter(MeterParameter::level(
+                        vec![
+                            MeterChannel::new(FloatParameters::Channel2Side(0))
+                                .clipping(BoolParameters::InputClipping(MixChannel::Channel1, 0))
+                                .named("Channel 1"),
+                            MeterChannel::new(FloatParameters::Channel2Side(1))
+                                .clipping(BoolParameters::InputClipping(MixChannel::Channel2, 0))
+                                .named("Channel 2"),
+                        ],
+                        "Level",
+                    )),
+                    Parameter::Meter(MeterParameter::reduction(
+                        vec![
+                            MeterChannel::new(FloatParameters::Gate(0)).named("Channel 1"),
+                            MeterChannel::new(FloatParameters::Gate(1)).named("Channel 2"),
+                        ],
+                        "Gate",
+                    )),
+                    Parameter::Meter(MeterParameter::reduction(
+                        vec![
+                            MeterChannel::new(FloatParameters::Compressor(0)).named("Channel 1"),
+                            MeterChannel::new(FloatParameters::Compressor(1)).named("Channel 2"),
+                        ],
+                        "Compressor",
+                    )),
+                    Parameter::Meter(MeterParameter::reduction(
+                        vec![
+                            MeterChannel::new(FloatParameters::Limiter(0)).named("Channel 1"),
+                            MeterChannel::new(FloatParameters::Limiter(1)).named("Channel 2"),
+                        ],
+                        "Limiter",
+                    )),
                 ],
             },
             stereo_meter_group("Playback", FloatParameters::Playback),
@@ -321,8 +549,13 @@ pub fn device_model() -> DeviceModel {
                 name: "Monitor",
                 visibility: ParameterGroupVisibility::Always,
                 parameters: vec![
-                    Parameter::Knob(FloatParameters::HeadphonesGain(), "Headphones output"),
-                    Parameter::Knob(FloatParameters::MonitorMix(), "Blend"),
+                    Parameter::Knob(
+                        KnobParameter::new(FloatParameters::HeadphonesGain(), "Headphones output")
+                            .percentage(),
+                    ),
+                    Parameter::Knob(
+                        KnobParameter::new(FloatParameters::MonitorMix(), "Blend").notch(0.0),
+                    ),
                     Parameter::Choice(ChoiceParameters::MonitorSource(), "Source", MONITOR_SOURCES),
                 ],
             },
@@ -349,18 +582,55 @@ fn mix_group(
     meter: fn(u8) -> FloatParameters,
     include_main_controls: bool,
 ) -> ParameterGroup {
+    let output_clipping = |side: u8| match bus {
+        0 => BoolParameters::OutputClipping(Bus::MainMix, side),
+        1 => BoolParameters::OutputClipping(Bus::MixA, side),
+        2 => BoolParameters::OutputClipping(Bus::MixB, side),
+        _ => panic!("unsupported mix bus: {bus}"),
+    };
+
     let mut parameters = vec![
-        Parameter::Meter(vec![(meter(0), None), (meter(1), None)], "Output"),
-        Parameter::Fader(FloatParameters::MixFader(bus, MixChannel::Playback), "Playback"),
-        Parameter::Fader(FloatParameters::MixFader(bus, MixChannel::VirtualA), "Virtual A"),
-        Parameter::Fader(FloatParameters::MixFader(bus, MixChannel::VirtualB), "Virtual B"),
-        Parameter::Fader(FloatParameters::MixFader(bus, MixChannel::Channel1), "Channel 1"),
-        Parameter::Fader(FloatParameters::MixFader(bus, MixChannel::Channel2), "Channel 2"),
-        Parameter::Fader(FloatParameters::MixFader(bus, MixChannel::Reverb), "Reverb"),
+        Parameter::Meter(MeterParameter::level(
+            vec![
+                MeterChannel::new(meter(0))
+                    .clipping(output_clipping(0))
+                    .named("Left"),
+                MeterChannel::new(meter(1))
+                    .clipping(output_clipping(1))
+                    .named("Right"),
+            ],
+            "Output",
+        )),
+        Parameter::Fader(FaderParameter::decibels(
+            FloatParameters::MixFader(bus, MixChannel::Playback),
+            "Playback",
+        )),
+        Parameter::Fader(FaderParameter::decibels(
+            FloatParameters::MixFader(bus, MixChannel::VirtualA),
+            "Virtual A",
+        )),
+        Parameter::Fader(FaderParameter::decibels(
+            FloatParameters::MixFader(bus, MixChannel::VirtualB),
+            "Virtual B",
+        )),
+        Parameter::Fader(FaderParameter::decibels(
+            FloatParameters::MixFader(bus, MixChannel::Channel1),
+            "Channel 1",
+        )),
+        Parameter::Fader(FaderParameter::decibels(
+            FloatParameters::MixFader(bus, MixChannel::Channel2),
+            "Channel 2",
+        )),
+        Parameter::Fader(FaderParameter::decibels(
+            FloatParameters::MixFader(bus, MixChannel::Reverb),
+            "Reverb",
+        )),
         Parameter::Button(BoolParameters::MixMono(bus), "Mono"),
     ];
     if include_main_controls {
-        parameters.push(Parameter::Knob(FloatParameters::MainGain(), "Main output"));
+        parameters.push(Parameter::Knob(
+            KnobParameter::new(FloatParameters::MainGain(), "Main output").percentage(),
+        ));
     }
 
     ParameterGroup {
@@ -371,17 +641,32 @@ fn mix_group(
 }
 
 fn stereo_meter_group(name: &'static str, parameter: fn(u8) -> FloatParameters) -> ParameterGroup {
+    let input_clipping = |side: u8| match parameter(0) {
+        FloatParameters::Playback(_) => BoolParameters::InputClipping(MixChannel::Playback, side),
+        FloatParameters::VirtualA(_) => BoolParameters::InputClipping(MixChannel::VirtualA, side),
+        FloatParameters::VirtualB(_) => BoolParameters::InputClipping(MixChannel::VirtualB, side),
+        _ => panic!("unsupported stereo meter parameter: {:?}", parameter(0)),
+    };
+
     ParameterGroup {
         name,
         visibility: ParameterGroupVisibility::Always,
-        parameters: vec![
-            Parameter::Meter(vec![(parameter(0), None), (parameter(1), None)], "Output"),
-        ],
+        parameters: vec![Parameter::Meter(MeterParameter::level(
+            vec![
+                MeterChannel::new(parameter(0))
+                    .clipping(input_clipping(0))
+                    .named("Left"),
+                MeterChannel::new(parameter(1))
+                    .clipping(input_clipping(1))
+                    .named("Right"),
+            ],
+            "Output",
+        ))],
     }
 }
 
 pub fn jast_parameter_values(payload: JaSt) -> Vec<ParameterValue> {
-    const CLIPPING_MASK: u32 = 0x0000_00c0;
+    const CLIPPING_MASK: u16 = 0x00c0;
 
     let channel_linked = payload.status_flags_1.channel_link();
     let channel_1_preset_enabled = !payload.status_flags_0.channel_1_preset_disabled();
@@ -410,15 +695,93 @@ pub fn jast_parameter_values(payload: JaSt) -> Vec<ParameterValue> {
         float(FloatParameters::Gate(1), payload.channel_2_gate),
         float(FloatParameters::Compressor(1), payload.channel_2_comp),
         float(FloatParameters::Limiter(1), payload.channel_2_limiter),
-        uint(UIntParameters::ActivityMask(0), payload.channel_1_activity),
-        uint(UIntParameters::ActivityMask(1), payload.channel_2_activity),
+        uint(
+            UIntParameters::ActivityMask(0),
+            payload.channel_1_activity.into(),
+        ),
+        uint(
+            UIntParameters::ActivityMask(1),
+            payload.channel_2_activity.into(),
+        ),
         bool_value(
             BoolParameters::Clipping(0),
-            payload.channel_1_activity & CLIPPING_MASK == CLIPPING_MASK,
+            (payload.channel_1_activity & CLIPPING_MASK) == CLIPPING_MASK,
         ),
         bool_value(
             BoolParameters::Clipping(1),
-            payload.channel_2_activity & CLIPPING_MASK == CLIPPING_MASK,
+            (payload.channel_2_activity & CLIPPING_MASK) == CLIPPING_MASK,
+        ),
+        bool_value(
+            BoolParameters::InputClipping(MixChannel::Playback, 0),
+            payload.input_clipping.playback_l(),
+        ),
+        bool_value(
+            BoolParameters::InputClipping(MixChannel::Playback, 1),
+            payload.input_clipping.playback_r(),
+        ),
+        bool_value(
+            BoolParameters::InputClipping(MixChannel::VirtualA, 0),
+            payload.input_clipping.virtual_a_l(),
+        ),
+        bool_value(
+            BoolParameters::InputClipping(MixChannel::VirtualA, 1),
+            payload.input_clipping.virtual_a_r(),
+        ),
+        bool_value(
+            BoolParameters::InputClipping(MixChannel::VirtualB, 0),
+            payload.input_clipping.virtual_b_l(),
+        ),
+        bool_value(
+            BoolParameters::InputClipping(MixChannel::VirtualB, 1),
+            payload.input_clipping.virtual_b_r(),
+        ),
+        bool_value(
+            BoolParameters::InputClipping(MixChannel::Channel1, 0),
+            payload.input_clipping.channel_1(),
+        ),
+        bool_value(
+            BoolParameters::InputClipping(MixChannel::Channel1, 1),
+            payload.input_clipping.stereo_l(),
+        ),
+        bool_value(
+            BoolParameters::InputClipping(MixChannel::Channel2, 0),
+            payload.input_clipping.channel_2(),
+        ),
+        bool_value(
+            BoolParameters::InputClipping(MixChannel::Channel2, 1),
+            payload.input_clipping.stereo_r(),
+        ),
+        bool_value(
+            BoolParameters::InputClipping(MixChannel::Reverb, 0),
+            payload.input_clipping.reverb_l(),
+        ),
+        bool_value(
+            BoolParameters::InputClipping(MixChannel::Reverb, 1),
+            payload.input_clipping.reverb_r(),
+        ),
+        bool_value(
+            BoolParameters::OutputClipping(Bus::MainMix, 0),
+            payload.output_clipping.main_l(),
+        ),
+        bool_value(
+            BoolParameters::OutputClipping(Bus::MainMix, 1),
+            payload.output_clipping.main_r(),
+        ),
+        bool_value(
+            BoolParameters::OutputClipping(Bus::MixA, 0),
+            payload.output_clipping.mix_a_l(),
+        ),
+        bool_value(
+            BoolParameters::OutputClipping(Bus::MixA, 1),
+            payload.output_clipping.mix_a_r(),
+        ),
+        bool_value(
+            BoolParameters::OutputClipping(Bus::MixB, 0),
+            payload.output_clipping.mix_b_l(),
+        ),
+        bool_value(
+            BoolParameters::OutputClipping(Bus::MixB, 1),
+            payload.output_clipping.mix_b_r(),
         ),
         uint(
             UIntParameters::StatusFlags(0),
@@ -498,17 +861,23 @@ mod tests {
         payload.channel_2_flags.set_enabled_48v(true);
         payload.monitor_mix = 0.25;
         payload.channel_2_gain = 42.0;
+        payload.input_clipping.set_playback_l(true);
+        payload.input_clipping.set_virtual_a_r(true);
+        payload.input_clipping.set_channel_1(true);
+        payload.input_clipping.set_stereo_l(true);
+        payload.output_clipping.set_main_l(true);
+        payload.output_clipping.set_mix_b_r(true);
         payload.flag_3 = 7;
 
         let values = jast_parameter_values(payload);
 
-        assert_eq!(values.len(), 44);
-        assert!(values.contains(&ParameterValue::Float(FloatParameters::Playback(0), 0.25, )));
+        assert_eq!(values.len(), 62);
+        assert!(values.contains(&ParameterValue::Float(FloatParameters::Playback(0), 0.25,)));
         assert!(values.contains(&ParameterValue::Float(
             FloatParameters::Channel2Side(1),
             0.5,
         )));
-        assert!(values.contains(&ParameterValue::UInt(UIntParameters::ActivityMask(0), 1, )));
+        assert!(values.contains(&ParameterValue::UInt(UIntParameters::ActivityMask(0), 1,)));
         assert!(values.contains(&ParameterValue::Bool(
             BoolParameters::PresetEnabled(0),
             true,
@@ -521,14 +890,38 @@ mod tests {
             BoolParameters::LinkedPresetEnabled(),
             false,
         )));
-        assert!(values.contains(&ParameterValue::Bool(BoolParameters::Clipping(0), false, )));
-        assert!(values.contains(&ParameterValue::Bool(BoolParameters::Clipping(1), true, )));
-        assert!(values.contains(&ParameterValue::Bool(BoolParameters::PhantomPower(0), true, )));
-        assert!(values.contains(&ParameterValue::Bool(BoolParameters::PhantomPower(1), true, )));
-        assert!(values.contains(&ParameterValue::Bool(BoolParameters::ChannelLink(), true, )));
-        assert!(values.contains(&ParameterValue::Float(FloatParameters::MonitorMix(), 0.25, )));
-        assert!(values.contains(&ParameterValue::Float(FloatParameters::Gain(1), 42.0, )));
-        assert!(values.contains(&ParameterValue::UInt(UIntParameters::EventFlag(3), 7, )));
+        assert!(values.contains(&ParameterValue::Bool(BoolParameters::Clipping(0), false,)));
+        assert!(values.contains(&ParameterValue::Bool(BoolParameters::Clipping(1), true,)));
+        assert!(values.contains(&ParameterValue::Bool(
+            BoolParameters::InputClipping(MixChannel::Playback, 0),
+            true,
+        )));
+        assert!(values.contains(&ParameterValue::Bool(
+            BoolParameters::InputClipping(MixChannel::VirtualA, 1),
+            true,
+        )));
+        assert!(values.contains(&ParameterValue::Bool(
+            BoolParameters::InputClipping(MixChannel::Channel1, 0),
+            true,
+        )));
+        assert!(values.contains(&ParameterValue::Bool(
+            BoolParameters::InputClipping(MixChannel::Channel1, 1),
+            true,
+        )));
+        assert!(values.contains(&ParameterValue::Bool(
+            BoolParameters::OutputClipping(Bus::MainMix, 0),
+            true,
+        )));
+        assert!(values.contains(&ParameterValue::Bool(
+            BoolParameters::OutputClipping(Bus::MixB, 1),
+            true,
+        )));
+        assert!(values.contains(&ParameterValue::Bool(BoolParameters::PhantomPower(0), true,)));
+        assert!(values.contains(&ParameterValue::Bool(BoolParameters::PhantomPower(1), true,)));
+        assert!(values.contains(&ParameterValue::Bool(BoolParameters::ChannelLink(), true,)));
+        assert!(values.contains(&ParameterValue::Float(FloatParameters::MonitorMix(), 0.25,)));
+        assert!(values.contains(&ParameterValue::Float(FloatParameters::Gain(1), 42.0,)));
+        assert!(values.contains(&ParameterValue::UInt(UIntParameters::EventFlag(3), 7,)));
     }
 
     #[test]
@@ -555,33 +948,57 @@ mod tests {
             FloatParameters::MonitorMix(),
         ] {
             assert!(parameters.iter().any(
-                |parameter| matches!(parameter, Parameter::Knob(actual, _) if *actual == expected)
+                |parameter| matches!(parameter, Parameter::Knob(spec) if spec.parameter == expected)
             ));
         }
     }
 
     #[test]
-    fn assigns_control_units_and_meter_direction() {
-        for parameter in [
-            FloatParameters::Gain(0),
-            FloatParameters::ReverbSend(0),
-            FloatParameters::HeadphonesGain(),
-            FloatParameters::MixFader(0, MixChannel::Playback),
-        ] {
-            assert!(parameter.is_decibels());
-        }
-        assert!(!FloatParameters::MainGain().is_decibels());
-        assert!(FloatParameters::MainGain().is_percentage());
-        assert_eq!(FloatParameters::MainGain().spec().min, 0.0);
-        assert_eq!(FloatParameters::MainGain().spec().max, 1.0);
+    fn stores_control_presentation_in_parameter_specs() {
+        let parameters = device_model()
+            .groups
+            .into_iter()
+            .flat_map(|group| group.parameters)
+            .collect::<Vec<_>>();
 
-        assert!(FloatParameters::Compressor(0).is_reduction_meter());
-        assert!(FloatParameters::Gate(0).is_reduction_meter());
-        assert!(FloatParameters::Limiter(0).is_reduction_meter());
-        assert!(!FloatParameters::ChannelLevel(0).is_reduction_meter());
+        let gain = parameters.iter().find_map(|parameter| match parameter {
+            Parameter::Knob(spec) if spec.parameter == FloatParameters::Gain(0) => Some(spec),
+            _ => None,
+        });
+        assert!(matches!(
+            gain.map(|spec| spec.display),
+            Some(ValueDisplay::Number { suffix: " dB", .. })
+        ));
+
+        let main_output = parameters.iter().find_map(|parameter| match parameter {
+            Parameter::Knob(spec) if spec.parameter == FloatParameters::MainGain() => Some(spec),
+            _ => None,
+        });
+        assert!(matches!(
+            main_output.map(|spec| spec.display),
+            Some(ValueDisplay::Percentage { .. })
+        ));
+
+        let compressor = parameters.iter().find_map(|parameter| match parameter {
+            Parameter::Meter(spec)
+                if spec
+                    .channels
+                    .iter()
+                    .any(|channel| channel.parameter == FloatParameters::Compressor(0)) =>
+            {
+                Some(spec)
+            }
+            _ => None,
+        });
+        assert!(matches!(
+            compressor.map(|spec| (spec.input, spec.inverted)),
+            Some((MeterInput::Decibels, true))
+        ));
 
         assert_eq!(
-            FloatParameters::MixFader(0, MixChannel::Playback).spec().min,
+            FloatParameters::MixFader(0, MixChannel::Playback)
+                .spec()
+                .min,
             -96.0
         );
     }
@@ -592,7 +1009,7 @@ mod tests {
             .groups
             .into_iter()
             .flat_map(|group| group.parameters)
-            .filter(|parameter| matches!(parameter, Parameter::Fader(_, _)))
+            .filter(|parameter| matches!(parameter, Parameter::Fader(_)))
             .count();
 
         assert_eq!(faders, 18);

@@ -315,7 +315,7 @@ mod tests {
                     },
                 },
             ))
-                .is_none()
+            .is_none()
         );
     }
 
@@ -329,7 +329,7 @@ mod tests {
                     data: BusPariParameter::MixMono { enabled: true },
                 },
             ))
-                .is_none()
+            .is_none()
         );
     }
 

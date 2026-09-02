@@ -26,6 +26,7 @@
 //! # }
 //! ```
 
+mod control;
 mod fader;
 mod knob;
 mod meter;

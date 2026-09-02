@@ -19,8 +19,8 @@ pub mod state;
 
 use crate::device_state::Command::Set;
 use crate::device_state::{
-    BoolParameters, ChoiceParameters, FloatParameters, Parameter, ParameterGroup, ParameterValue,
-    State, UIntParameters, device_model,
+    BoolParameters, ChoiceParameters, FloatParameters, MeterInput, Parameter, ParameterGroup,
+    ParameterValue, State, UIntParameters, ValueDisplay, device_model,
 };
 use eframe::{Frame, egui};
 use egui_audio_controls::{Fader, Knob, LevelMeter};
@@ -64,6 +64,48 @@ fn main() -> eframe::Result {
     )
 }
 
+fn configure_knob_display<'a>(knob: Knob<'a>, display: ValueDisplay) -> Knob<'a> {
+    match display {
+        ValueDisplay::Number {
+            prefix,
+            suffix,
+            decimals,
+        } => knob.prefix(prefix).suffix(suffix).decimals(decimals),
+        ValueDisplay::Percentage { decimals } => knob
+            .suffix("%")
+            .decimals(decimals)
+            .custom_formatter(move |value, _| format!("{:.*}", decimals, value * 100.0))
+            .custom_parser(|text| {
+                text.trim()
+                    .trim_end_matches('%')
+                    .parse::<f64>()
+                    .ok()
+                    .map(|value| value / 100.0)
+            }),
+    }
+}
+
+fn configure_fader_display<'a>(fader: Fader<'a>, display: ValueDisplay) -> Fader<'a> {
+    match display {
+        ValueDisplay::Number {
+            prefix,
+            suffix,
+            decimals,
+        } => fader.prefix(prefix).suffix(suffix).decimals(decimals),
+        ValueDisplay::Percentage { decimals } => fader
+            .suffix("%")
+            .decimals(decimals)
+            .custom_formatter(move |value, _| format!("{:.*}", decimals, value * 100.0))
+            .custom_parser(|text| {
+                text.trim()
+                    .trim_end_matches('%')
+                    .parse::<f64>()
+                    .ok()
+                    .map(|value| value / 100.0)
+            }),
+    }
+}
+
 fn parameter_group(
     ui: &mut egui::Ui,
     device_state: &mut DeviceState,
@@ -75,88 +117,86 @@ fn parameter_group(
         ui.horizontal_wrapped(|ui| {
             for parameter in &group.parameters {
                 match parameter {
-                    Parameter::Knob(float_parameter, label) => {
-                        let spec = float_parameter.spec();
+                    Parameter::Knob(control) => {
+                        let range = control.parameter.spec();
                         let mut knob = Knob::new(
-                            &mut device_state.floats[*float_parameter],
-                            spec.min..=spec.max,
+                            &mut device_state.floats[control.parameter],
+                            range.min..=range.max,
                         )
-                            .text(*label);
-                        knob = match float_parameter {
-                            FloatParameters::Gain(_) | FloatParameters::ReverbSend(_) => {
-                                knob.suffix(" dB")
-                            }
-                            FloatParameters::MainGain() | FloatParameters::HeadphonesGain() => knob
-                                .suffix("%")
-                                .decimals(0)
-                                .custom_formatter(|value, _| format!("{:.0}", value * 100.0))
-                                .custom_parser(|text| {
-                                    text.trim()
-                                        .trim_end_matches('%')
-                                        .parse::<f64>()
-                                        .ok()
-                                        .map(|value| value / 100.0)
-                                }),
-                            FloatParameters::Pan(_) => knob.notch(0.5),
-                            FloatParameters::MonitorMix() => knob.notch(0.0),
-                            _ => knob,
-                        };
+                        .scale(control.scale)
+                        .notches(control.notches.iter().copied())
+                        .text(control.label);
+                        if let Some(reset_value) = control.reset_value {
+                            knob = knob.reset_value(reset_value);
+                        }
+                        knob = configure_knob_display(knob, control.display);
+
                         if ui.add(knob).changed() {
                             sender
                                 .send(Set(ParameterValue::Float(
-                                    *float_parameter,
-                                    device_state.floats[*float_parameter],
+                                    control.parameter,
+                                    device_state.floats[control.parameter],
                                 )))
                                 .unwrap();
                         }
                     }
-                    Parameter::Fader(float_parameter, label) => {
-                        let spec = float_parameter.spec();
-                        let fader = Fader::new(
-                            &mut device_state.floats[*float_parameter],
-                            spec.min..=spec.max,
+                    Parameter::Fader(control) => {
+                        let range = control.parameter.spec();
+                        let mut fader = Fader::new(
+                            &mut device_state.floats[control.parameter],
+                            range.min..=range.max,
                         )
-                            .text(*label)
-                            .decibels()
-                            .notch(0.0)
-                            .reset_value(0.0);
+                        .notches(control.notches.iter().copied())
+                        .text(control.label);
+                        if control.decibel_taper {
+                            fader = fader.decibels();
+                        }
+                        if let Some(reset_value) = control.reset_value {
+                            fader = fader.reset_value(reset_value);
+                        }
+                        fader = configure_fader_display(fader, control.display);
+
                         if ui.add(fader).changed() {
                             sender
                                 .send(Set(ParameterValue::Float(
-                                    *float_parameter,
-                                    device_state.floats[*float_parameter],
+                                    control.parameter,
+                                    device_state.floats[control.parameter],
                                 )))
                                 .unwrap();
                         }
                     }
-                    Parameter::Meter(channels, label) => {
-                        let values = channels
+                    Parameter::Meter(meter_spec) => {
+                        let values = meter_spec
+                            .channels
                             .iter()
-                            .map(|(parameter, _)| device_state.floats[*parameter])
+                            .map(|channel| device_state.floats[channel.parameter])
                             .collect::<Vec<_>>();
-                        let clipping = channels
+                        let clipping = meter_spec
+                            .channels
                             .iter()
-                            .map(|(_, clipping)| {
-                                clipping.map(|parameter| device_state.bools[parameter])
+                            .map(|channel| {
+                                channel
+                                    .clipping
+                                    .map(|parameter| device_state.bools[parameter])
                             })
                             .collect::<Vec<_>>();
-                        ui.add(
-                            LevelMeter::new(values)
-                                .optional_channel_clipping(clipping)
-                                .text(*label),
-                        );
-                    }
-                    Parameter::InvertedMeter(channels, label) => {
-                        let values = channels
+                        let names = meter_spec
+                            .channels
                             .iter()
-                            .map(|parameter| device_state.floats[*parameter])
+                            .map(|channel| channel.name)
                             .collect::<Vec<_>>();
-                        ui.add(
-                            LevelMeter::new(values)
-                                .range_db(-60.0..=0.0)
-                                .inverted()
-                                .text(*label),
-                        );
+                        let mut meter = match meter_spec.input {
+                            MeterInput::LinearAmplitude => LevelMeter::new(values),
+                            MeterInput::Decibels => LevelMeter::from_db(values),
+                        }
+                        .range_db(meter_spec.range_db.0..=meter_spec.range_db.1)
+                        .optional_channel_clipping(clipping)
+                        .optional_channel_names(names)
+                        .text(meter_spec.label);
+                        if meter_spec.inverted {
+                            meter = meter.inverted();
+                        }
+                        ui.add(meter);
                     }
                     Parameter::UIntValue(uint_parameter, label) => {
                         let value = device_state.uints[*uint_parameter];

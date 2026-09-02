@@ -3,6 +3,7 @@ use crate::protocol::payload::{
     GatePayload, LimiterPayload, OptPayload, ReverbPayload, UnknownPayload, VocalEffectPayload,
 };
 use binrw::{BinRead, BinResult, BinWrite};
+use enum_map::Enum;
 use std::io::Cursor;
 
 #[derive(Debug, Clone, Copy, BinWrite, BinRead, Default, Eq, PartialEq)]
@@ -105,7 +106,7 @@ pub enum Selector {
     None,
 }
 
-#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, BinRead, BinWrite, PartialEq, Eq, Enum)]
 #[brw(repr = u32)]
 pub enum Bus {
     MainMix,

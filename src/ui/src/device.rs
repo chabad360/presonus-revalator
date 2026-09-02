@@ -7,7 +7,11 @@ use binrw::BinRead;
 use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::{Bulk, In, Out};
 use nusb::{MaybeFuture, list_devices};
-use presonus_revalator::protocol::payload::{ApplParaParameter, ApplPariParameter, ApplPayload, BusParaParameter, BusPariParameter, BusPayload, DefaultParaParameter, DefaultPayload, Fader, MixChannel, OptPariParameter, OptPayload, ProcessingOrder};
+use presonus_revalator::protocol::payload::{
+    ApplParaParameter, ApplPariParameter, ApplPayload, BusParaParameter, BusPariParameter,
+    BusPayload, DefaultParaParameter, DefaultPayload, Fader, MixChannel, OptPariParameter,
+    OptPayload, ProcessingOrder,
+};
 use presonus_revalator::protocol::protocol::{Body, Bus, Channel, Message, Selector, Target, Verb};
 use std::io;
 use std::io::{Cursor, Error, ErrorKind, Read, Write};
@@ -345,7 +349,10 @@ fn param_to_msg(nonce: u8, param: ParameterValue) -> Result<Message> {
             BusPayload::Fader {
                 unknown: 0,
                 length: 1,
-                records: vec![Fader { channel: source, value }],
+                records: vec![Fader {
+                    channel: source,
+                    value,
+                }],
             },
         ),
         ParameterValue::Bool(BoolParameters::PresetEnabled(channel), enabled) => Target::Appl(
@@ -434,7 +441,6 @@ fn appl_message(nonce: u8, payload: ApplPayload) -> Message {
     message(nonce, Target::Appl(Selector::None, payload))
 }
 
-
 fn mix_fader(source: u8, value: f32) -> Result<BusParaParameter> {
     match source {
         0 => Ok(BusParaParameter::Playback { value }),
@@ -458,7 +464,6 @@ fn mix_fader_value(parameter: BusParaParameter) -> Option<(MixChannel, f32)> {
         BusParaParameter::Unknown { .. } => None,
     }
 }
-
 
 fn message(nonce: u8, object: Target) -> Message {
     Message {
@@ -632,16 +637,16 @@ mod tests {
                 7,
                 ParameterValue::Bool(BoolParameters::PhantomPower(channel), true),
             )
-                .unwrap()
-                .to_bytes()
-                .unwrap();
+            .unwrap()
+            .to_bytes()
+            .unwrap();
             let disabled = param_to_msg(
                 7,
                 ParameterValue::Bool(BoolParameters::PhantomPower(channel), false),
             )
-                .unwrap()
-                .to_bytes()
-                .unwrap();
+            .unwrap()
+            .to_bytes()
+            .unwrap();
 
             assert_pari(&enabled, channel.into(), 0, 1);
             assert_pari(&disabled, channel.into(), 0, 0);
@@ -671,7 +676,7 @@ mod tests {
             11,
             ParameterValue::Bool(BoolParameters::LinkedPresetEnabled(), true),
         )
-            .unwrap();
+        .unwrap();
         let bytes = messages
             .iter()
             .map(Message::to_bytes)
@@ -698,7 +703,7 @@ mod tests {
                 7,
                 ParameterValue::Choice(ChoiceParameters::ProcessingOrder(channel), value),
             )
-                .unwrap();
+            .unwrap();
             let bytes = message.to_bytes().unwrap();
 
             assert_eq!(&bytes[12..16], b" tpo");
@@ -724,7 +729,7 @@ mod tests {
                 7,
                 ParameterValue::Choice(ChoiceParameters::ProcessingOrder(0), 2),
             )
-                .is_err()
+            .is_err()
         );
     }
 
@@ -735,7 +740,7 @@ mod tests {
                 7,
                 ParameterValue::Choice(ChoiceParameters::MonitorSource(), value),
             )
-                .unwrap();
+            .unwrap();
             let bytes = message.to_bytes().unwrap();
 
             assert_pari(&bytes, 0, 11, value);
@@ -756,7 +761,7 @@ mod tests {
                 7,
                 ParameterValue::Choice(ChoiceParameters::MonitorSource(), 3),
             )
-                .is_err()
+            .is_err()
         );
     }
 
@@ -768,7 +773,7 @@ mod tests {
                     7,
                     ParameterValue::Bool(BoolParameters::MixMono(bus), enabled),
                 )
-                    .unwrap();
+                .unwrap();
                 let bytes = message.to_bytes().unwrap();
 
                 assert_eq!(&bytes[12..16], &100_u32.to_le_bytes());
@@ -780,7 +785,7 @@ mod tests {
             }
         }
 
-        assert!(param_to_msg(7, ParameterValue::Bool(BoolParameters::MixMono(3), true), ).is_err());
+        assert!(param_to_msg(7, ParameterValue::Bool(BoolParameters::MixMono(3), true),).is_err());
     }
 
     #[test]
@@ -803,7 +808,7 @@ mod tests {
         }
 
         assert!(
-            param_to_msg(7, ParameterValue::Float(FloatParameters::MonitorMix(), 1.1), ).is_err()
+            param_to_msg(7, ParameterValue::Float(FloatParameters::MonitorMix(), 1.1),).is_err()
         );
     }
 
@@ -814,7 +819,7 @@ mod tests {
                 7,
                 ParameterValue::Float(FloatParameters::Pan(channel), value),
             )
-                .unwrap();
+            .unwrap();
             let bytes = message.to_bytes().unwrap();
 
             assert_eq!(&bytes[12..16], &0_u32.to_le_bytes());
@@ -836,7 +841,7 @@ mod tests {
             );
         }
 
-        assert!(param_to_msg(7, ParameterValue::Float(FloatParameters::Pan(0), 1.1), ).is_err());
+        assert!(param_to_msg(7, ParameterValue::Float(FloatParameters::Pan(0), 1.1),).is_err());
     }
 
     #[test]
@@ -846,7 +851,7 @@ mod tests {
                 7,
                 ParameterValue::Float(FloatParameters::ReverbSend(channel), value),
             )
-                .unwrap();
+            .unwrap();
             let bytes = message.to_bytes().unwrap();
 
             assert_eq!(&bytes[12..16], &0_u32.to_le_bytes());
@@ -888,16 +893,16 @@ mod tests {
             7,
             ParameterValue::Bool(BoolParameters::PresetEnabled(1), true),
         )
-            .unwrap()
-            .to_bytes()
-            .unwrap();
+        .unwrap()
+        .to_bytes()
+        .unwrap();
         let disabled = param_to_msg(
             7,
             ParameterValue::Bool(BoolParameters::PresetEnabled(1), false),
         )
-            .unwrap()
-            .to_bytes()
-            .unwrap();
+        .unwrap()
+        .to_bytes()
+        .unwrap();
 
         assert_eq!(enabled.len(), disabled.len());
         assert_eq!(
@@ -925,9 +930,9 @@ mod tests {
                     7,
                     ParameterValue::Float(FloatParameters::MixFader(bus, source.into()), value),
                 )
-                    .unwrap()
-                    .to_bytes()
-                    .unwrap();
+                .unwrap()
+                .to_bytes()
+                .unwrap();
 
                 assert_eq!(&bytes[8..12], b"PteS");
                 assert_eq!(&bytes[12..16], &100_u32.to_le_bytes());

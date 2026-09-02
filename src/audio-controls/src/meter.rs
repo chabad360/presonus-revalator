@@ -66,6 +66,7 @@ pub struct LevelMeter {
     clip_db: f32,
     inverted: bool,
     clipping: Vec<Option<bool>>,
+    channel_names: Vec<Option<String>>,
     text: Option<String>,
     size: Vec2,
     colors: MeterColors,
@@ -99,6 +100,7 @@ impl LevelMeter {
             clip_db: 0.0,
             inverted: false,
             clipping: vec![None; channel_count],
+            channel_names: vec![None; channel_count],
             text: None,
             size: Vec2::new((channel_width + 46.0).max(72.0), 220.0),
             colors: MeterColors::default(),
@@ -145,6 +147,24 @@ impl LevelMeter {
             "clipping states must match the meter channel count"
         );
         self.clipping = clipping;
+        self
+    }
+
+    /// Assigns optional names used in the per-channel tooltip.
+    pub fn optional_channel_names<S>(mut self, names: impl IntoIterator<Item = Option<S>>) -> Self
+    where
+        S: Into<String>,
+    {
+        let names = names
+            .into_iter()
+            .map(|name| name.map(Into::into))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names.len(),
+            self.values.len(),
+            "channel names must match the meter channel count"
+        );
+        self.channel_names = names;
         self
     }
 
@@ -231,7 +251,7 @@ impl Widget for LevelMeter {
             } else {
                 minimum_db
             };
-            let position = meter_position(shown_db, &self.range_db);
+            let position = meter_position(db, &self.range_db);
             let activity = if self.inverted {
                 1.0 - position
             } else {
@@ -328,7 +348,10 @@ impl Widget for LevelMeter {
             } else {
                 format!("−∞ {unit}")
             };
-            tooltip_lines.push(format!("{}: {value_text}", index + 1));
+            let channel_name = self.channel_names[index]
+                .as_deref()
+                .map_or_else(|| format!("Channel {}", index + 1), str::to_owned);
+            tooltip_lines.push(format!("{channel_name}: {value_text}"));
             if show_value {
                 painter.text(
                     Pos2::new(rect.left(), rect.top() + 2.0),
@@ -483,6 +506,13 @@ fn paint_ticks(
 
 /// IEC 60268-18 style meter deflection, normalized to the requested range.
 fn meter_position(db: f32, range: &RangeInclusive<f32>) -> f32 {
+    if db == f32::NEG_INFINITY || db.is_nan() {
+        return 0.0;
+    }
+    if db == f32::INFINITY {
+        return 1.0;
+    }
+
     let db = db.clamp(*range.start(), *range.end());
     (iec_deflection(db) / iec_deflection(*range.end())).clamp(0.0, 1.0)
 }
@@ -510,10 +540,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn negative_infinity_has_zero_deflection_but_finite_floor_does_not() {
+        let range = -60.0..=0.0;
+
+        assert_eq!(meter_position(f32::NEG_INFINITY, &range), 0.0);
+        assert_eq!(meter_position(f32::NAN, &range), 0.0);
+        assert_eq!(meter_position(-60.0, &range), 0.025);
+        assert_eq!(meter_position(f32::INFINITY, &range), 1.0);
+    }
+
+    #[test]
     fn accepts_single_and_multiple_channels() {
         assert_eq!(LevelMeter::new(0.5).values, vec![0.5]);
         assert_eq!(LevelMeter::new([0.25, 0.5]).values, vec![0.25, 0.5]);
         assert_eq!(LevelMeter::new(vec![0.1, 0.2, 0.3]).values.len(), 3);
+
+        let direct_db = LevelMeter::from_db([f32::NEG_INFINITY, -12.0]);
+        assert!(direct_db.values_are_db);
+        assert_eq!(direct_db.values, vec![f32::NEG_INFINITY, -12.0]);
     }
 
     #[test]

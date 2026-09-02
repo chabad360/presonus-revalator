@@ -913,10 +913,10 @@ pub struct JaSt {
     pub virtual_b_left: f32,  // payload[4] dBFS
     pub virtual_b_right: f32, // payload[5] dBFS
 
-    pub stereo_left: f32,  // payload[6] dBFS
     pub channel_1: f32,    // payload[7] dBFS
-    pub stereo_right: f32, // payload[8] dBFS
+    pub stereo_left: f32,  // payload[6] dBFS
     pub channel_2: f32,    // payload[9] dBFS
+    pub stereo_right: f32, // payload[8] dBFS
 
     pub unknown_1_0: u32, // payload[10]
     pub unknown_1_1: u32, // payload[11]
@@ -945,14 +945,16 @@ pub struct JaSt {
     pub channel_2_comp: f32,    // payload[30] dBFS
     pub channel_2_limiter: f32, // payload[31] dBFS
 
-    pub unknown_6_0: u32,        // payload[32]
-    pub unknown_6_1: u32,        // payload[33]
-    pub unknown_7_0: u32,        // payload[34]
-    pub unknown_7_1: u32,        // payload[35]
-    pub unknown_8_0: u32,        // payload[36]
-    pub unknown_8_1: u32,        // payload[37]
-    pub channel_1_activity: u32, // payload[38]
-    pub channel_2_activity: u32, // payload[39]
+    pub unknown_6_0: u32, // payload[32]
+    pub unknown_6_1: u32, // payload[33]
+    pub unknown_7_0: u32, // payload[34]
+    pub unknown_7_1: u32, // payload[35]
+    pub unknown_8_0: u32, // payload[36]
+    pub unknown_8_1: u32, // payload[37]
+    pub input_clipping: InputClipping,
+    pub channel_1_activity: u16, // payload[38]
+    pub output_clipping: OutputClipping,
+    pub channel_2_activity: u16, // payload[39]
     pub unknown_10_0: u32,       // payload[40]
     pub unknown_10_1: u32,       // payload[41]
     pub unknown_11_0: u32,       // payload[42]
@@ -963,8 +965,8 @@ pub struct JaSt {
     pub status_flags_1: StatusFlags1, // payload[44]
     pub status_flags_2: u16,
 
-    pub gain_headphones: f32, // payload[45] dBFS
-    pub main_gain: f32,       // payload[46] dBFS
+    pub gain_headphones: f32, // payload[45], normalized percentage (0.0–1.0)
+    pub main_gain: f32,       // payload[46], normalized percentage (0.0–1.0)
     pub monitor_mix: f32,     // payload[47] -1.0 to 1.0
 
     pub channel_1_gain: f32, // payload[48] 0 to 60
@@ -1010,7 +1012,6 @@ pub enum MixChannel {
     Channel2,
     #[brw(magic(5u32))]
     Reverb,
-
     // Unknown(u32),
 }
 
@@ -1026,6 +1027,40 @@ impl From<u32> for MixChannel {
             _ => panic!("Invalid value for MixChannel: {}", value),
         }
     }
+}
+
+#[bitfield]
+#[derive(Debug, Clone, Copy, PartialEq, BinRead, BinWrite)]
+#[br(map = Self::from_bytes)]
+#[bw(map = |&x| Self::into_bytes(x))]
+pub struct InputClipping {
+    pub playback_l: bool,
+    pub playback_r: bool,
+    pub virtual_a_l: bool,
+    pub virtual_a_r: bool,
+    pub virtual_b_l: bool,
+    pub virtual_b_r: bool,
+    pub channel_1: bool,
+    pub stereo_r: bool,
+    pub channel_2: bool,
+    pub stereo_l: bool,
+    pub unknown: B4,
+    pub reverb_l: bool,
+    pub reverb_r: bool,
+}
+
+#[bitfield]
+#[derive(Debug, Clone, Copy, PartialEq, BinRead, BinWrite)]
+#[br(map = Self::from_bytes)]
+#[bw(map = |&x| Self::into_bytes(x))]
+pub struct OutputClipping {
+    pub main_l: bool,
+    pub main_r: bool,
+    pub mix_a_l: bool,
+    pub mix_a_r: bool,
+    pub mix_b_l: bool,
+    pub mix_b_r: bool,
+    pub unknown_extra: B10,
 }
 
 #[bitfield]

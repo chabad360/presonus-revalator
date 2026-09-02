@@ -732,9 +732,9 @@ IDs are defined:
 
 | Parameter ID | Object | Value representation |
 |---:|---|---|
-| `1` | `Appl` | Headphones output level in dB |
+| `1` | `Appl` | Headphones output level as a normalized percentage (`0.0`–`1.0`) |
 | `1` | `0x00000000` | Reverb send in dB; continuous changes may emit intermediate values |
-| `2` | `Appl` | Main output level in dB |
+| `2` | `Appl` | Main output level as a normalized percentage (`0.0`–`1.0`) |
 | `2` | `0x00000000` | Pan normalized to `[0.0, 1.0]`; `0.0` is full left, `0.5` is center, and `1.0` is full right |
 | `3` | `Appl` | Channel gain in dB |
 | `4` | `Appl` | Preset processing enable, encoded as `f32` 0.0 or 1.0 |
@@ -1014,8 +1014,8 @@ compatible template until those fields are characterized.
 | Channel link | `SetP/Appl/Pari` | Parameter ID 9 for both channel targets; integer 0 or 1 |
 | Monitor source | `SetP/Appl/Pari` | Parameter ID 11, target 0; Main 0, Mix A 1, Mix B 2 |
 | Mix mono | `GetP`/`SetP` on `0x00000064/Pari` | Bus selector 0–2, parameter ID 8, target 0; stereo 0, mono 1 |
-| Headphones output | `GetP`/`SetP` on `Appl/Para` | Parameter ID 1, target 0, direct dB float |
-| Main output | `GetP`/`SetP` on `Appl/Para` | Parameter ID 2, target 0, direct dB float |
+| Headphones output | `GetP`/`SetP` on `Appl/Para` | Parameter ID 1, target 0, normalized percentage float (`0.0`–`1.0`) |
+| Main output | `GetP`/`SetP` on `Appl/Para` | Parameter ID 2, target 0, normalized percentage float (`0.0`–`1.0`) |
 | Monitor blend | `GetP`/`SetP` on `Appl/Para` | Parameter ID 10, target 0, normalized float -1.0–1.0 |
 | Processing order | `SetP/opt /Pari` | Integer parameter ID 0, boolean value |
 | Reverb send | `SetP/0x00000000/Para` | Generic `Para`, parameter ID 1, direct dB float |
