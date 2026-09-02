@@ -1,9 +1,9 @@
 use crate::device_state::{
-    BoolParameters, ChoiceParameters, Command, FloatParameters, ParameterValue, State,
-    jast_parameter_values,
+    jast_parameter_values, BoolParameters, ChoiceParameters, Command, FloatParameters,
+    ParameterValue, State,
 };
 use binrw::BinRead;
-use nusb::{MaybeFuture, list_devices};
+use nusb::{list_devices, MaybeFuture};
 use pcap::Device;
 use presonus_revalator::protocol::payload::{
     ApplParaParameter, ApplPariParameter, ApplPayload, BusParaParameter, BusPariParameter,
@@ -101,6 +101,7 @@ fn message_to_state(message: Message) -> Option<State> {
 
     match body.object {
         Target::Appl(_, ApplPayload::JaSt(payload)) => {
+            log_unknown_jast_values(&payload);
             Some(State::UpdateMany(jast_parameter_values(payload)))
         }
         Target::Appl(_, ApplPayload::Para { channel, data }) => match data {
@@ -199,6 +200,34 @@ fn message_to_state(message: Message) -> Option<State> {
         Target::Opt(_, OptPayload::Pari { .. }) => None,
         _ => None,
     }
+}
+
+fn log_unknown_jast_values(payload: &presonus_revalator::protocol::payload::JaSt) {
+    println!(
+        "JaSt u32 values: 2_0={}, 2_1={}, 10_0={}, 10_1={}, 11_0={}, 11_1={}; \
+JaSt f32 values: 3_0={}, 3_1={}, 4_0={}, 4_1={}, 5_0={}, 5_1={}, \
+6_0={}, 6_1={}, 7_0={}, 7_1={}, 8_0={}, 8_1={}, 12_0={}, 12_1={}",
+        payload.unknown_2_0,
+        payload.unknown_2_1,
+        payload.unknown_10_0,
+        payload.unknown_10_1,
+        payload.unknown_11_0,
+        payload.unknown_11_1,
+        payload.unknown_3_0,
+        payload.unknown_3_1,
+        payload.unknown_4_0,
+        payload.unknown_4_1,
+        payload.unknown_5_0,
+        payload.unknown_5_1,
+        payload.unknown_6_0,
+        payload.unknown_6_1,
+        payload.unknown_7_0,
+        payload.unknown_7_1,
+        payload.unknown_8_0,
+        payload.unknown_8_1,
+        payload.unknown_12_0,
+        payload.unknown_12_1,
+    );
 }
 
 #[cfg(test)]
@@ -305,32 +334,28 @@ mod tests {
 
     #[test]
     fn ignores_monitor_source_on_other_application_target() {
-        assert!(
-            observed_state(Target::Appl(
-                Selector::None,
-                ApplPayload::Pari {
-                    channel: Channel::Channel2,
-                    data: ApplPariParameter::MonitorSource {
-                        source: Bus::MainMix,
-                    },
+        assert!(observed_state(Target::Appl(
+            Selector::None,
+            ApplPayload::Pari {
+                channel: Channel::Channel2,
+                data: ApplPariParameter::MonitorSource {
+                    source: Bus::MainMix,
                 },
-            ))
-            .is_none()
-        );
+            },
+        ))
+        .is_none());
     }
 
     #[test]
     fn ignores_mono_on_other_target() {
-        assert!(
-            observed_state(Target::Bus(
-                Bus::MainMix,
-                BusPayload::Pari {
-                    channel: Channel::Channel2,
-                    data: BusPariParameter::MixMono { enabled: true },
-                },
-            ))
-            .is_none()
-        );
+        assert!(observed_state(Target::Bus(
+            Bus::MainMix,
+            BusPayload::Pari {
+                channel: Channel::Channel2,
+                data: BusPariParameter::MixMono { enabled: true },
+            },
+        ))
+        .is_none());
     }
 
     #[test]

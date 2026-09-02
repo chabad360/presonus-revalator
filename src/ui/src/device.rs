@@ -1,12 +1,12 @@
 use crate::device_state::{
-    BoolParameters, ChoiceParameters, Command, FloatParameters, ParameterValue, State,
-    jast_parameter_values,
+    jast_parameter_values, BoolParameters, ChoiceParameters, Command, FloatParameters,
+    ParameterValue, State,
 };
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use binrw::BinRead;
 use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::{Bulk, In, Out};
-use nusb::{MaybeFuture, list_devices};
+use nusb::{list_devices, MaybeFuture};
 use presonus_revalator::protocol::payload::{
     ApplParaParameter, ApplPariParameter, ApplPayload, BusParaParameter, BusPariParameter,
     BusPayload, DefaultParaParameter, DefaultPayload, Fader, MixChannel, OptPariParameter,
@@ -115,7 +115,7 @@ fn next_messages(nonce: u8, update_rx: &mut Receiver<Command>) -> anyhow::Result
             }),
             ..Default::default()
         }]),
-        Command::RefreshMixers() => Ok(mixer_refresh_messages(nonce)),
+        Command::RefreshMixers() => Ok(vec![]),
         Command::Set(param) => param_to_msgs(nonce, param),
         Command::SetMany(params) => {
             let mut messages = Vec::new();
@@ -160,22 +160,6 @@ fn startup_refresh_messages(nonce: u8) -> Vec<Message> {
                     data: OptPariParameter::ProcessingOrder {
                         order: ProcessingOrder::CompFirst,
                     },
-                },
-            ),
-        ));
-    }
-    for data in [
-        ApplParaParameter::PhonesOut { value: -96.0 },
-        ApplParaParameter::MainOut { value: -96.0 },
-        ApplParaParameter::Blend { value: 0.0 },
-    ] {
-        messages.push(get_message(
-            nonce.wrapping_add(messages.len() as u8),
-            Target::Appl(
-                Selector::None,
-                ApplPayload::Para {
-                    channel: Channel::Channel1,
-                    data,
                 },
             ),
         ));
@@ -724,13 +708,11 @@ mod tests {
             );
         }
 
-        assert!(
-            param_to_msg(
-                7,
-                ParameterValue::Choice(ChoiceParameters::ProcessingOrder(0), 2),
-            )
-            .is_err()
-        );
+        assert!(param_to_msg(
+            7,
+            ParameterValue::Choice(ChoiceParameters::ProcessingOrder(0), 2),
+        )
+        .is_err());
     }
 
     #[test]
@@ -756,13 +738,11 @@ mod tests {
             );
         }
 
-        assert!(
-            param_to_msg(
-                7,
-                ParameterValue::Choice(ChoiceParameters::MonitorSource(), 3),
-            )
-            .is_err()
-        );
+        assert!(param_to_msg(
+            7,
+            ParameterValue::Choice(ChoiceParameters::MonitorSource(), 3),
+        )
+        .is_err());
     }
 
     #[test]

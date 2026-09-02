@@ -79,6 +79,10 @@ float_parameters! {
         min: 0.0,
         max: 1.0,
     },
+    Reverb(_side: u8) {
+        min: 0.0,
+        max: 1.0,
+    },
     ChannelLevel(_channel: u8) {
         min: 0.0,
         max: 1.0,
@@ -382,7 +386,6 @@ pub fn device_model() -> DeviceModel {
                 name: "Channel 1",
                 visibility: ParameterGroupVisibility::Unlinked,
                 parameters: vec![
-                    Parameter::UIntValue(UIntParameters::ActivityMask(0), "Activity mask"),
                     Parameter::Button(BoolParameters::PresetEnabled(0), "Preset"),
                     Parameter::Button(BoolParameters::PhantomPower(0), "48 V"),
                     Parameter::Knob(
@@ -391,20 +394,18 @@ pub fn device_model() -> DeviceModel {
                     Parameter::Knob(
                         KnobParameter::new(FloatParameters::Pan(0), "Pan (L–C–R)").notch(0.5),
                     ),
-                    Parameter::Knob(
-                        KnobParameter::new(FloatParameters::ReverbSend(0), "Reverb send (dB)")
-                            .decibels(),
-                    ),
+                    Parameter::Fader(FaderParameter::decibels(
+                        FloatParameters::ReverbSend(0),
+                        "Reverb send",
+                    )),
                     Parameter::Choice(
                         ChoiceParameters::ProcessingOrder(0),
                         "Processing order",
                         PROCESSING_ORDERS,
                     ),
                     Parameter::Meter(MeterParameter::level(
-                        vec![
-                            MeterChannel::new(FloatParameters::ChannelLevel(0))
-                                .clipping(BoolParameters::InputClipping(MixChannel::Channel1, 0)),
-                        ],
+                        vec![MeterChannel::new(FloatParameters::ChannelLevel(0))
+                            .clipping(BoolParameters::InputClipping(MixChannel::Channel1, 0))],
                         "Level",
                     )),
                     Parameter::Meter(MeterParameter::reduction(
@@ -425,7 +426,6 @@ pub fn device_model() -> DeviceModel {
                 name: "Channel 2",
                 visibility: ParameterGroupVisibility::Unlinked,
                 parameters: vec![
-                    Parameter::UIntValue(UIntParameters::ActivityMask(1), "Activity mask"),
                     Parameter::Button(BoolParameters::PresetEnabled(1), "Preset"),
                     Parameter::Button(BoolParameters::PhantomPower(1), "48 V"),
                     Parameter::Button(BoolParameters::ChannelLink(), "Channel link"),
@@ -435,20 +435,18 @@ pub fn device_model() -> DeviceModel {
                     Parameter::Knob(
                         KnobParameter::new(FloatParameters::Pan(1), "Pan (L–C–R)").notch(0.5),
                     ),
-                    Parameter::Knob(
-                        KnobParameter::new(FloatParameters::ReverbSend(1), "Reverb send (dB)")
-                            .decibels(),
-                    ),
+                    Parameter::Fader(FaderParameter::decibels(
+                        FloatParameters::ReverbSend(1),
+                        "Reverb send",
+                    )),
                     Parameter::Choice(
                         ChoiceParameters::ProcessingOrder(1),
                         "Processing order",
                         PROCESSING_ORDERS,
                     ),
                     Parameter::Meter(MeterParameter::level(
-                        vec![
-                            MeterChannel::new(FloatParameters::ChannelLevel(1))
-                                .clipping(BoolParameters::InputClipping(MixChannel::Channel2, 0)),
-                        ],
+                        vec![MeterChannel::new(FloatParameters::ChannelLevel(1))
+                            .clipping(BoolParameters::InputClipping(MixChannel::Channel2, 0))],
                         "Level",
                     )),
                     Parameter::Meter(MeterParameter::reduction(
@@ -469,8 +467,6 @@ pub fn device_model() -> DeviceModel {
                 name: "Channels 1+2 (linked)",
                 visibility: ParameterGroupVisibility::Linked,
                 parameters: vec![
-                    Parameter::UIntValue(UIntParameters::ActivityMask(0), "Activity 1"),
-                    Parameter::UIntValue(UIntParameters::ActivityMask(1), "Activity 2"),
                     Parameter::Button(BoolParameters::LinkedPresetEnabled(), "Preset"),
                     Parameter::Button(BoolParameters::PhantomPower(0), "48 V 1"),
                     Parameter::Button(BoolParameters::PhantomPower(1), "48 V 2"),
@@ -487,14 +483,14 @@ pub fn device_model() -> DeviceModel {
                     Parameter::Knob(
                         KnobParameter::new(FloatParameters::Pan(1), "Pan 2 (L–C–R)").notch(0.5),
                     ),
-                    Parameter::Knob(
-                        KnobParameter::new(FloatParameters::ReverbSend(0), "Reverb send 1 (dB)")
-                            .decibels(),
-                    ),
-                    Parameter::Knob(
-                        KnobParameter::new(FloatParameters::ReverbSend(1), "Reverb send 2 (dB)")
-                            .decibels(),
-                    ),
+                    Parameter::Fader(FaderParameter::decibels(
+                        FloatParameters::ReverbSend(0),
+                        "Reverb send 1",
+                    )),
+                    Parameter::Fader(FaderParameter::decibels(
+                        FloatParameters::ReverbSend(1),
+                        "Reverb send 2",
+                    )),
                     Parameter::Choice(
                         ChoiceParameters::ProcessingOrder(0),
                         "Processing order 1",
@@ -542,15 +538,19 @@ pub fn device_model() -> DeviceModel {
             stereo_meter_group("Playback", FloatParameters::Playback),
             stereo_meter_group("Virtual A", FloatParameters::VirtualA),
             stereo_meter_group("Virtual B", FloatParameters::VirtualB),
-            mix_group("Main", 0, FloatParameters::Main, true),
-            mix_group("Mix A", 1, FloatParameters::MixA, false),
-            mix_group("Mix B", 2, FloatParameters::MixB, false),
+            stereo_meter_group("Reverb", FloatParameters::Reverb),
+            mix_group("Main", 0, FloatParameters::Main),
+            mix_group("Mix A", 1, FloatParameters::MixA),
+            mix_group("Mix B", 2, FloatParameters::MixB),
             ParameterGroup {
                 name: "Monitor",
                 visibility: ParameterGroupVisibility::Always,
                 parameters: vec![
                     Parameter::Knob(
-                        KnobParameter::new(FloatParameters::HeadphonesGain(), "Headphones output")
+                        KnobParameter::new(FloatParameters::MainGain(), "Speaker").percentage(),
+                    ),
+                    Parameter::Knob(
+                        KnobParameter::new(FloatParameters::HeadphonesGain(), "Headphones")
                             .percentage(),
                     ),
                     Parameter::Knob(
@@ -580,7 +580,6 @@ fn mix_group(
     name: &'static str,
     bus: u8,
     meter: fn(u8) -> FloatParameters,
-    include_main_controls: bool,
 ) -> ParameterGroup {
     let output_clipping = |side: u8| match bus {
         0 => BoolParameters::OutputClipping(Bus::MainMix, side),
@@ -627,11 +626,6 @@ fn mix_group(
         )),
         Parameter::Button(BoolParameters::MixMono(bus), "Mono"),
     ];
-    if include_main_controls {
-        parameters.push(Parameter::Knob(
-            KnobParameter::new(FloatParameters::MainGain(), "Main output").percentage(),
-        ));
-    }
 
     ParameterGroup {
         name,
@@ -645,6 +639,7 @@ fn stereo_meter_group(name: &'static str, parameter: fn(u8) -> FloatParameters) 
         FloatParameters::Playback(_) => BoolParameters::InputClipping(MixChannel::Playback, side),
         FloatParameters::VirtualA(_) => BoolParameters::InputClipping(MixChannel::VirtualA, side),
         FloatParameters::VirtualB(_) => BoolParameters::InputClipping(MixChannel::VirtualB, side),
+        FloatParameters::Reverb(_) => BoolParameters::InputClipping(MixChannel::Reverb, side),
         _ => panic!("unsupported stereo meter parameter: {:?}", parameter(0)),
     };
 
@@ -679,6 +674,8 @@ pub fn jast_parameter_values(payload: JaSt) -> Vec<ParameterValue> {
         float(FloatParameters::VirtualA(1), payload.virtual_a_right),
         float(FloatParameters::VirtualB(0), payload.virtual_b_left),
         float(FloatParameters::VirtualB(1), payload.virtual_b_right),
+        float(FloatParameters::Reverb(0), payload.reverb_l),
+        float(FloatParameters::Reverb(1), payload.reverb_r),
         float(FloatParameters::Channel2Side(0), payload.stereo_left),
         float(FloatParameters::ChannelLevel(0), payload.channel_1),
         float(FloatParameters::Channel2Side(1), payload.stereo_right),
@@ -850,6 +847,8 @@ mod tests {
     fn maps_representative_jast_values() {
         let mut payload = JaSt::read_le(&mut Cursor::new([0_u8; 212])).unwrap();
         payload.playback_left = 0.25;
+        payload.reverb_l = 0.125;
+        payload.reverb_r = 0.75;
         payload.stereo_right = 0.5;
         payload.channel_1_activity = 1;
         payload.channel_2_activity = 0x0000_00c0;
@@ -871,13 +870,15 @@ mod tests {
 
         let values = jast_parameter_values(payload);
 
-        assert_eq!(values.len(), 62);
-        assert!(values.contains(&ParameterValue::Float(FloatParameters::Playback(0), 0.25,)));
+        assert_eq!(values.len(), 64);
+        assert!(values.contains(&ParameterValue::Float(FloatParameters::Playback(0), 0.25, )));
+        assert!(values.contains(&ParameterValue::Float(FloatParameters::Reverb(0), 0.125, )));
+        assert!(values.contains(&ParameterValue::Float(FloatParameters::Reverb(1), 0.75, )));
         assert!(values.contains(&ParameterValue::Float(
             FloatParameters::Channel2Side(1),
             0.5,
         )));
-        assert!(values.contains(&ParameterValue::UInt(UIntParameters::ActivityMask(0), 1,)));
+        assert!(values.contains(&ParameterValue::UInt(UIntParameters::ActivityMask(0), 1, )));
         assert!(values.contains(&ParameterValue::Bool(
             BoolParameters::PresetEnabled(0),
             true,
@@ -890,8 +891,8 @@ mod tests {
             BoolParameters::LinkedPresetEnabled(),
             false,
         )));
-        assert!(values.contains(&ParameterValue::Bool(BoolParameters::Clipping(0), false,)));
-        assert!(values.contains(&ParameterValue::Bool(BoolParameters::Clipping(1), true,)));
+        assert!(values.contains(&ParameterValue::Bool(BoolParameters::Clipping(0), false, )));
+        assert!(values.contains(&ParameterValue::Bool(BoolParameters::Clipping(1), true, )));
         assert!(values.contains(&ParameterValue::Bool(
             BoolParameters::InputClipping(MixChannel::Playback, 0),
             true,
@@ -916,12 +917,12 @@ mod tests {
             BoolParameters::OutputClipping(Bus::MixB, 1),
             true,
         )));
-        assert!(values.contains(&ParameterValue::Bool(BoolParameters::PhantomPower(0), true,)));
-        assert!(values.contains(&ParameterValue::Bool(BoolParameters::PhantomPower(1), true,)));
-        assert!(values.contains(&ParameterValue::Bool(BoolParameters::ChannelLink(), true,)));
-        assert!(values.contains(&ParameterValue::Float(FloatParameters::MonitorMix(), 0.25,)));
-        assert!(values.contains(&ParameterValue::Float(FloatParameters::Gain(1), 42.0,)));
-        assert!(values.contains(&ParameterValue::UInt(UIntParameters::EventFlag(3), 7,)));
+        assert!(values.contains(&ParameterValue::Bool(BoolParameters::PhantomPower(0), true, )));
+        assert!(values.contains(&ParameterValue::Bool(BoolParameters::PhantomPower(1), true, )));
+        assert!(values.contains(&ParameterValue::Bool(BoolParameters::ChannelLink(), true, )));
+        assert!(values.contains(&ParameterValue::Float(FloatParameters::MonitorMix(), 0.25, )));
+        assert!(values.contains(&ParameterValue::Float(FloatParameters::Gain(1), 42.0, )));
+        assert!(values.contains(&ParameterValue::UInt(UIntParameters::EventFlag(3), 7, )));
     }
 
     #[test]
@@ -951,6 +952,13 @@ mod tests {
                 |parameter| matches!(parameter, Parameter::Knob(spec) if spec.parameter == expected)
             ));
         }
+        assert!(parameters.iter().any(|parameter| matches!(
+            parameter,
+            Parameter::Meter(spec)
+                if spec.label == "Output"
+                    && spec.channels.iter().any(|channel| channel.parameter == FloatParameters::Reverb(0))
+                    && spec.channels.iter().any(|channel| channel.parameter == FloatParameters::Reverb(1))
+        )));
     }
 
     #[test]
@@ -981,13 +989,13 @@ mod tests {
 
         let compressor = parameters.iter().find_map(|parameter| match parameter {
             Parameter::Meter(spec)
-                if spec
-                    .channels
-                    .iter()
-                    .any(|channel| channel.parameter == FloatParameters::Compressor(0)) =>
-            {
-                Some(spec)
-            }
+            if spec
+                .channels
+                .iter()
+                .any(|channel| channel.parameter == FloatParameters::Compressor(0)) =>
+                {
+                    Some(spec)
+                }
             _ => None,
         });
         assert!(matches!(
@@ -1012,6 +1020,6 @@ mod tests {
             .filter(|parameter| matches!(parameter, Parameter::Fader(_)))
             .count();
 
-        assert_eq!(faders, 18);
+        assert_eq!(faders, 22);
     }
 }

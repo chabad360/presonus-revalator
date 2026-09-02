@@ -918,8 +918,8 @@ pub struct JaSt {
     pub channel_2: f32,    // payload[9] dBFS
     pub stereo_right: f32, // payload[8] dBFS
 
-    pub unknown_1_0: u32, // payload[10]
-    pub unknown_1_1: u32, // payload[11]
+    pub reverb_l: f32, // payload[10]
+    pub reverb_r: f32, // payload[11]
     pub unknown_2_0: u32, // payload[12]
     pub unknown_2_1: u32, // payload[13]
 
@@ -930,12 +930,12 @@ pub struct JaSt {
     pub mix_b_left: f32,  // payload[18] dBFS
     pub mix_b_right: f32, // payload[19] dBFS
 
-    pub unknown_3_0: u32, // payload[20]
-    pub unknown_3_1: u32, // payload[21]
-    pub unknown_4_0: u32, // payload[22]
-    pub unknown_4_1: u32, // payload[23]
-    pub unknown_5_0: u32, // payload[24]
-    pub unknown_5_1: u32, // payload[25]
+    pub unknown_3_0: f32, // payload[20]
+    pub unknown_3_1: f32, // payload[21]
+    pub unknown_4_0: f32, // payload[22]
+    pub unknown_4_1: f32, // payload[23]
+    pub unknown_5_0: f32, // payload[24]
+    pub unknown_5_1: f32, // payload[25]
 
     pub channel_1_gate: f32,    // payload[26] dBFS?
     pub channel_1_comp: f32,    // payload[27] dBFS
@@ -945,17 +945,17 @@ pub struct JaSt {
     pub channel_2_comp: f32,    // payload[30] dBFS
     pub channel_2_limiter: f32, // payload[31] dBFS
 
-    pub unknown_6_0: u32, // payload[32]
-    pub unknown_6_1: u32, // payload[33]
-    pub unknown_7_0: u32, // payload[34]
-    pub unknown_7_1: u32, // payload[35]
-    pub unknown_8_0: u32, // payload[36]
-    pub unknown_8_1: u32, // payload[37]
+    pub unknown_6_0: f32, // payload[32]
+    pub unknown_6_1: f32, // payload[33]
+    pub unknown_7_0: f32, // payload[34]
+    pub unknown_7_1: f32, // payload[35]
+    pub unknown_8_0: f32, // payload[36]
+    pub unknown_8_1: f32, // payload[37]
     pub input_clipping: InputClipping,
     pub channel_1_activity: u16, // payload[38]
     pub output_clipping: OutputClipping,
     pub channel_2_activity: u16, // payload[39]
-    pub unknown_10_0: u32,       // payload[40]
+    pub unknown_10_0: u32,       // payload[40], changes on channel link
     pub unknown_10_1: u32,       // payload[41]
     pub unknown_11_0: u32,       // payload[42]
     pub unknown_11_1: u32,       // payload[43]

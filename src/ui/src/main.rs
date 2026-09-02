@@ -19,15 +19,37 @@ pub mod state;
 
 use crate::device_state::Command::Set;
 use crate::device_state::{
-    BoolParameters, ChoiceParameters, FloatParameters, MeterInput, Parameter, ParameterGroup,
-    ParameterValue, State, UIntParameters, ValueDisplay, device_model,
+    device_model, BoolParameters, ChoiceParameters, FloatParameters, MeterInput, Parameter,
+    ParameterGroup, ParameterValue, State, UIntParameters, ValueDisplay,
 };
-use eframe::{Frame, egui};
+use eframe::{egui, Frame};
 use egui_audio_controls::{Fader, Knob, LevelMeter};
 use enum_map::EnumMap;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
+
+const MIN_GROUP_WIDTH: f32 = 800.0;
+const COMPACT_GROUP_WIDTH: f32 = 120.0;
+
+#[derive(Clone, Copy)]
+struct GroupLayout {
+    min_width: f32,
+    expands: bool,
+}
+
+fn group_layout(group: &ParameterGroup) -> GroupLayout {
+    match group.parameters.as_slice() {
+        [Parameter::Meter(_)] => GroupLayout {
+            min_width: COMPACT_GROUP_WIDTH,
+            expands: false,
+        },
+        _ => GroupLayout {
+            min_width: MIN_GROUP_WIDTH,
+            expands: true,
+        },
+    }
+}
 
 fn main() -> eframe::Result {
     env_logger::init();
@@ -64,7 +86,7 @@ fn main() -> eframe::Result {
     )
 }
 
-fn configure_knob_display<'a>(knob: Knob<'a>, display: ValueDisplay) -> Knob<'a> {
+fn configure_knob_display(knob: Knob, display: ValueDisplay) -> Knob {
     match display {
         ValueDisplay::Number {
             prefix,
@@ -85,7 +107,7 @@ fn configure_knob_display<'a>(knob: Knob<'a>, display: ValueDisplay) -> Knob<'a>
     }
 }
 
-fn configure_fader_display<'a>(fader: Fader<'a>, display: ValueDisplay) -> Fader<'a> {
+fn configure_fader_display(fader: Fader, display: ValueDisplay) -> Fader {
     match display {
         ValueDisplay::Number {
             prefix,
@@ -113,6 +135,7 @@ fn parameter_group(
     group: &ParameterGroup,
 ) {
     ui.group(|ui| {
+        ui.set_width(ui.available_width());
         ui.label(egui::RichText::new(group.name).strong());
         ui.horizontal_wrapped(|ui| {
             for parameter in &group.parameters {
@@ -123,9 +146,9 @@ fn parameter_group(
                             &mut device_state.floats[control.parameter],
                             range.min..=range.max,
                         )
-                        .scale(control.scale)
-                        .notches(control.notches.iter().copied())
-                        .text(control.label);
+                            .scale(control.scale)
+                            .notches(control.notches.iter().copied())
+                            .text(control.label);
                         if let Some(reset_value) = control.reset_value {
                             knob = knob.reset_value(reset_value);
                         }
@@ -146,8 +169,8 @@ fn parameter_group(
                             &mut device_state.floats[control.parameter],
                             range.min..=range.max,
                         )
-                        .notches(control.notches.iter().copied())
-                        .text(control.label);
+                            .notches(control.notches.iter().copied())
+                            .text(control.label);
                         if control.decibel_taper {
                             fader = fader.decibels();
                         }
@@ -189,10 +212,10 @@ fn parameter_group(
                             MeterInput::LinearAmplitude => LevelMeter::new(values),
                             MeterInput::Decibels => LevelMeter::from_db(values),
                         }
-                        .range_db(meter_spec.range_db.0..=meter_spec.range_db.1)
-                        .optional_channel_clipping(clipping)
-                        .optional_channel_names(names)
-                        .text(meter_spec.label);
+                            .range_db(meter_spec.range_db.0..=meter_spec.range_db.1)
+                            .optional_channel_clipping(clipping)
+                            .optional_channel_names(names)
+                            .text(meter_spec.label);
                         if meter_spec.inverted {
                             meter = meter.inverted();
                         }
@@ -336,14 +359,91 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let channel_linked = self.device_state.bools[BoolParameters::ChannelLink()];
-                for group in self
+                let available_width = ui.available_width();
+                let horizontal_spacing = ui.spacing().item_spacing.x;
+                let visible_groups = self
                     .device_model
                     .groups
                     .iter()
-                    .filter(|group| group.visibility.is_visible(channel_linked))
-                {
-                    parameter_group(ui, &mut self.device_state, &self.usb_updates, group);
-                    ui.add_space(4.0);
+                    .enumerate()
+                    .filter_map(|(index, group)| {
+                        group.visibility.is_visible(channel_linked).then_some(index)
+                    })
+                    .collect::<Vec<_>>();
+
+                let mut rows = Vec::new();
+                let mut current_row = Vec::new();
+                let mut current_width = 0.0;
+
+                for group_index in visible_groups {
+                    let layout = group_layout(&self.device_model.groups[group_index]);
+                    let next_width = if current_row.is_empty() {
+                        layout.min_width
+                    } else {
+                        current_width + horizontal_spacing + layout.min_width
+                    };
+
+                    if !current_row.is_empty() && next_width > available_width {
+                        rows.push(current_row);
+                        current_row = vec![group_index];
+                        current_width = layout.min_width;
+                    } else {
+                        current_row.push(group_index);
+                        current_width = next_width;
+                    }
+                }
+
+                if !current_row.is_empty() {
+                    rows.push(current_row);
+                }
+
+                for row in rows {
+                    let row_min_width = row
+                        .iter()
+                        .map(|&group_index| {
+                            group_layout(&self.device_model.groups[group_index]).min_width
+                        })
+                        .sum::<f32>();
+                    let expandable_count = row
+                        .iter()
+                        .filter(|&&group_index| {
+                            group_layout(&self.device_model.groups[group_index]).expands
+                        })
+                        .count();
+                    let extra_width = (available_width
+                        - row_min_width
+                        - horizontal_spacing * row.len().saturating_sub(1) as f32)
+                        .max(0.0);
+                    let extra_per_expanding_group = if expandable_count == 0 {
+                        0.0
+                    } else {
+                        extra_width / expandable_count as f32
+                    };
+
+                    ui.horizontal_top(|ui| {
+                        for &group_index in &row {
+                            let group = &self.device_model.groups[group_index];
+                            let layout = group_layout(group);
+                            let group_width = layout.min_width
+                                + if layout.expands {
+                                extra_per_expanding_group
+                            } else {
+                                0.0
+                            };
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(group_width, 0.0),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    parameter_group(
+                                        ui,
+                                        &mut self.device_state,
+                                        &self.usb_updates,
+                                        group,
+                                    );
+                                },
+                            );
+                        }
+                    });
                 }
             });
         });
