@@ -22,14 +22,12 @@ use crate::device_state::{
     BoolParameters, ChoiceParameters, FloatParameters, Parameter, ParameterGroup, ParameterValue,
     State, UIntParameters, device_model,
 };
-use eframe::egui::Slider;
 use eframe::{Frame, egui};
+use egui_audio_controls::{Fader, Knob, LevelMeter};
 use enum_map::EnumMap;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-// use armas::prelude::*;
-// use armas_audio::{MixerStrip, MixerStripMode};
 
 fn main() -> eframe::Result {
     env_logger::init();
@@ -37,11 +35,11 @@ fn main() -> eframe::Result {
     // let (usb_events, usb_updates) = device::init_capture();
     let init = device::init_capture();
     if let Err(err) = init {
-        return eframe::run_simple_native(
+        return eframe::run_ui_native(
             "Presonus Revalator",
             Default::default(),
-            move |ctx, _frame| {
-                egui::CentralPanel::default().show(ctx, |ui| {
+            move |ui, _frame| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     ui.label(format!("Error initializing device: {err:?}"));
                     if ui.button("Exit").clicked() {
                         std::process::exit(1);
@@ -79,16 +77,31 @@ fn parameter_group(
                 match parameter {
                     Parameter::Knob(float_parameter, label) => {
                         let spec = float_parameter.spec();
-                        if ui
-                            .add(
-                                Slider::new(
-                                    &mut device_state.floats[*float_parameter],
-                                    spec.min..=spec.max,
-                                )
-                                    .text(*label),
-                            )
-                            .changed()
-                        {
+                        let mut knob = Knob::new(
+                            &mut device_state.floats[*float_parameter],
+                            spec.min..=spec.max,
+                        )
+                            .text(*label);
+                        knob = match float_parameter {
+                            FloatParameters::Gain(_) | FloatParameters::ReverbSend(_) => {
+                                knob.suffix(" dB")
+                            }
+                            FloatParameters::MainGain() | FloatParameters::HeadphonesGain() => knob
+                                .suffix("%")
+                                .decimals(0)
+                                .custom_formatter(|value, _| format!("{:.0}", value * 100.0))
+                                .custom_parser(|text| {
+                                    text.trim()
+                                        .trim_end_matches('%')
+                                        .parse::<f64>()
+                                        .ok()
+                                        .map(|value| value / 100.0)
+                                }),
+                            FloatParameters::Pan(_) => knob.notch(0.5),
+                            FloatParameters::MonitorMix() => knob.notch(0.0),
+                            _ => knob,
+                        };
+                        if ui.add(knob).changed() {
                             sender
                                 .send(Set(ParameterValue::Float(
                                     *float_parameter,
@@ -99,18 +112,15 @@ fn parameter_group(
                     }
                     Parameter::Fader(float_parameter, label) => {
                         let spec = float_parameter.spec();
-                        if ui
-                            .add(
-                                Slider::new(
-                                    &mut device_state.floats[*float_parameter],
-                                    spec.min..=spec.max,
-                                )
-                                    .vertical()
-                                    .text(*label)
-                                    .suffix(" dB"),
-                            )
-                            .changed()
-                        {
+                        let fader = Fader::new(
+                            &mut device_state.floats[*float_parameter],
+                            spec.min..=spec.max,
+                        )
+                            .text(*label)
+                            .decibels()
+                            .notch(0.0)
+                            .reset_value(0.0);
+                        if ui.add(fader).changed() {
                             sender
                                 .send(Set(ParameterValue::Float(
                                     *float_parameter,
@@ -119,12 +129,33 @@ fn parameter_group(
                                 .unwrap();
                         }
                     }
-                    Parameter::Meter(float_parameter, label) => {
-                        let value = device_state.floats[*float_parameter];
-                        let dbfs = meter_level_to_dbfs(value);
+                    Parameter::Meter(channels, label) => {
+                        let values = channels
+                            .iter()
+                            .map(|(parameter, _)| device_state.floats[*parameter])
+                            .collect::<Vec<_>>();
+                        let clipping = channels
+                            .iter()
+                            .map(|(_, clipping)| {
+                                clipping.map(|parameter| device_state.bools[parameter])
+                            })
+                            .collect::<Vec<_>>();
                         ui.add(
-                            egui::ProgressBar::new(meter_fill(value))
-                                .text(format!("{label}: {dbfs:.1} dBFS")),
+                            LevelMeter::new(values)
+                                .optional_channel_clipping(clipping)
+                                .text(*label),
+                        );
+                    }
+                    Parameter::InvertedMeter(channels, label) => {
+                        let values = channels
+                            .iter()
+                            .map(|parameter| device_state.floats[*parameter])
+                            .collect::<Vec<_>>();
+                        ui.add(
+                            LevelMeter::new(values)
+                                .range_db(-60.0..=0.0)
+                                .inverted()
+                                .text(*label),
                         );
                     }
                     Parameter::UIntValue(uint_parameter, label) => {
@@ -182,22 +213,6 @@ fn parameter_group(
             }
         });
     });
-}
-
-fn meter_fill(level: f32) -> f32 {
-    if level.is_nan() {
-        return 0.0;
-    }
-
-    level.clamp(0.0, 1.0)
-}
-
-fn meter_level_to_dbfs(level: f32) -> f32 {
-    if level <= 0.0 || level.is_nan() {
-        return f32::NEG_INFINITY;
-    }
-
-    20.0 * level.log10()
 }
 
 #[derive(Debug, Clone)]
@@ -272,13 +287,13 @@ fn drain_usb_events(rx: &std::sync::mpsc::Receiver<State>, state: &mut DeviceSta
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut Frame) {
         // self.usb_updates
         //     .send(device_state::Command::Refresh())
         //     .unwrap();
         drain_usb_events(&self.usb_events, &mut self.device_state);
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let channel_linked = self.device_state.bools[BoolParameters::ChannelLink()];
                 for group in self
@@ -294,21 +309,7 @@ impl eframe::App for App {
         });
 
         thread::sleep(Duration::from_millis(14));
-        ctx.request_repaint_after(std::time::Duration::from_millis(16));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{meter_fill, meter_level_to_dbfs};
-
-    #[test]
-    fn renders_linear_meter_level_with_dbfs_label() {
-        assert_eq!(meter_fill(0.5), 0.5);
-        assert!((meter_level_to_dbfs(0.5) - -6.0206).abs() < 0.0001);
-        assert_eq!(meter_fill(0.0), 0.0);
-        assert_eq!(meter_level_to_dbfs(0.0), f32::NEG_INFINITY);
-        assert_eq!(meter_fill(f32::NAN), 0.0);
-        assert_eq!(meter_level_to_dbfs(f32::NAN), f32::NEG_INFINITY);
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(16));
     }
 }

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = [ "src/ui" ]
+members = [ "src/audio-controls", "src/ui" ]
 
 [lib]
 

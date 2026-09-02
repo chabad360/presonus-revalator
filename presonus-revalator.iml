@@ -7,6 +7,7 @@
       <sourceFolder url="file://$MODULE_DIR$/src/ui/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/src/ui/ui/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/src/audio-controls/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/src/ui/target" />
       <excludeFolder url="file://$MODULE_DIR$/src/ui/ui/target" />
       <excludeFolder url="file://$MODULE_DIR$/target" />

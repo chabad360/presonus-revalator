@@ -133,8 +133,30 @@ float_parameters! {
         max: 0.0,
     },
     MixFader(_bus: u8, _source: MixChannel) {
-        min: -144.0,
+        min: -96.0,
         max: 10.0,
+    }
+}
+
+impl FloatParameters {
+    /// Whether this parameter is stored in decibels rather than a linear unit.
+    pub fn is_decibels(self) -> bool {
+        return false;
+        matches!(
+            self,
+            Self::HeadphonesGain()
+                | Self::Gain(_)
+                | Self::ReverbSend(_)
+                | Self::MixFader(_, _)
+        )
+    }
+
+    pub fn is_percentage(self) -> bool {
+        matches!(self, Self::MainGain())
+    }
+
+    pub fn is_reduction_meter(self) -> bool {
+        matches!(self, Self::Gate(_) | Self::Compressor(_) | Self::Limiter(_))
     }
 }
 
@@ -198,11 +220,12 @@ pub enum ParameterValue {
     Choice(ChoiceParameters, u32),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Parameter {
     Knob(FloatParameters, &'static str),
     Fader(FloatParameters, &'static str),
-    Meter(FloatParameters, &'static str),
+    Meter(Vec<(FloatParameters, Option<BoolParameters>)>, &'static str),
+    InvertedMeter(Vec<FloatParameters>, &'static str),
     UIntValue(UIntParameters, &'static str),
     Indicator(BoolParameters, &'static str),
     Button(BoolParameters, &'static str),
@@ -217,7 +240,6 @@ pub fn device_model() -> DeviceModel {
                 visibility: ParameterGroupVisibility::Unlinked,
                 parameters: vec![
                     Parameter::UIntValue(UIntParameters::ActivityMask(0), "Activity mask"),
-                    Parameter::Indicator(BoolParameters::Clipping(0), "Clipping"),
                     Parameter::Button(BoolParameters::PresetEnabled(0), "Preset"),
                     Parameter::Button(BoolParameters::PhantomPower(0), "48 V"),
                     Parameter::Knob(FloatParameters::Gain(0), "Gain"),
@@ -228,10 +250,10 @@ pub fn device_model() -> DeviceModel {
                         "Processing order",
                         PROCESSING_ORDERS,
                     ),
-                    Parameter::Meter(FloatParameters::ChannelLevel(0), "Level"),
-                    Parameter::Meter(FloatParameters::Gate(0), "Gate"),
-                    Parameter::Meter(FloatParameters::Compressor(0), "Compressor"),
-                    Parameter::Meter(FloatParameters::Limiter(0), "Limiter"),
+                    Parameter::Meter(vec![(FloatParameters::ChannelLevel(0), Some(BoolParameters::Clipping(0)))], "Level"),
+                    Parameter::InvertedMeter(vec![FloatParameters::Gate(0)], "Gate"),
+                    Parameter::InvertedMeter(vec![FloatParameters::Compressor(0)], "Compressor"),
+                    Parameter::InvertedMeter(vec![FloatParameters::Limiter(0)], "Limiter"),
                 ],
             },
             ParameterGroup {
@@ -239,7 +261,6 @@ pub fn device_model() -> DeviceModel {
                 visibility: ParameterGroupVisibility::Unlinked,
                 parameters: vec![
                     Parameter::UIntValue(UIntParameters::ActivityMask(1), "Activity mask"),
-                    Parameter::Indicator(BoolParameters::Clipping(1), "Clipping"),
                     Parameter::Button(BoolParameters::PresetEnabled(1), "Preset"),
                     Parameter::Button(BoolParameters::PhantomPower(1), "48 V"),
                     Parameter::Button(BoolParameters::ChannelLink(), "Channel link"),
@@ -251,12 +272,11 @@ pub fn device_model() -> DeviceModel {
                         "Processing order",
                         PROCESSING_ORDERS,
                     ),
-                    Parameter::Meter(FloatParameters::ChannelLevel(1), "Level"),
-                    Parameter::Meter(FloatParameters::Channel2Side(0), "Left"),
-                    Parameter::Meter(FloatParameters::Channel2Side(1), "Right"),
-                    Parameter::Meter(FloatParameters::Gate(1), "Gate"),
-                    Parameter::Meter(FloatParameters::Compressor(1), "Compressor"),
-                    Parameter::Meter(FloatParameters::Limiter(1), "Limiter"),
+                    Parameter::Meter(vec![(FloatParameters::ChannelLevel(1), Some(BoolParameters::Clipping(1)))], "Level"),
+                    Parameter::Meter(vec![(FloatParameters::Channel2Side(0), None), (FloatParameters::Channel2Side(1), None)], "Left"),
+                    Parameter::InvertedMeter(vec![FloatParameters::Gate(1)], "Gate"),
+                    Parameter::InvertedMeter(vec![FloatParameters::Compressor(1)], "Compressor"),
+                    Parameter::InvertedMeter(vec![FloatParameters::Limiter(1)], "Limiter"),
                 ],
             },
             ParameterGroup {
@@ -265,8 +285,6 @@ pub fn device_model() -> DeviceModel {
                 parameters: vec![
                     Parameter::UIntValue(UIntParameters::ActivityMask(0), "Activity 1"),
                     Parameter::UIntValue(UIntParameters::ActivityMask(1), "Activity 2"),
-                    Parameter::Indicator(BoolParameters::Clipping(0), "Clipping 1"),
-                    Parameter::Indicator(BoolParameters::Clipping(1), "Clipping 2"),
                     Parameter::Button(BoolParameters::LinkedPresetEnabled(), "Preset"),
                     Parameter::Button(BoolParameters::PhantomPower(0), "48 V 1"),
                     Parameter::Button(BoolParameters::PhantomPower(1), "48 V 2"),
@@ -287,16 +305,10 @@ pub fn device_model() -> DeviceModel {
                         "Processing order 2",
                         PROCESSING_ORDERS,
                     ),
-                    Parameter::Meter(FloatParameters::ChannelLevel(0), "Level 1"),
-                    Parameter::Meter(FloatParameters::ChannelLevel(1), "Level 2"),
-                    Parameter::Meter(FloatParameters::Channel2Side(0), "Left"),
-                    Parameter::Meter(FloatParameters::Channel2Side(1), "Right"),
-                    Parameter::Meter(FloatParameters::Gate(0), "Gate 1"),
-                    Parameter::Meter(FloatParameters::Gate(1), "Gate 2"),
-                    Parameter::Meter(FloatParameters::Compressor(0), "Compressor 1"),
-                    Parameter::Meter(FloatParameters::Compressor(1), "Compressor 2"),
-                    Parameter::Meter(FloatParameters::Limiter(0), "Limiter 1"),
-                    Parameter::Meter(FloatParameters::Limiter(1), "Limiter 2"),
+                    Parameter::Meter(vec![(FloatParameters::Channel2Side(0), Some(BoolParameters::Clipping(0))), (FloatParameters::Channel2Side(1), Some(BoolParameters::Clipping(1)))], "Left"),
+                    Parameter::InvertedMeter(vec![FloatParameters::Gate(0), FloatParameters::Gate(1)], "Gate 1"),
+                    Parameter::InvertedMeter(vec![FloatParameters::Compressor(0), FloatParameters::Compressor(1)], "Compressor 1"),
+                    Parameter::InvertedMeter(vec![FloatParameters::Limiter(0), FloatParameters::Limiter(1)], "Limiter 1"),
                 ],
             },
             stereo_meter_group("Playback", FloatParameters::Playback),
@@ -338,8 +350,7 @@ fn mix_group(
     include_main_controls: bool,
 ) -> ParameterGroup {
     let mut parameters = vec![
-        Parameter::Meter(meter(0), "Left"),
-        Parameter::Meter(meter(1), "Right"),
+        Parameter::Meter(vec![(meter(0), None), (meter(1), None)], "Output"),
         Parameter::Fader(FloatParameters::MixFader(bus, MixChannel::Playback), "Playback"),
         Parameter::Fader(FloatParameters::MixFader(bus, MixChannel::VirtualA), "Virtual A"),
         Parameter::Fader(FloatParameters::MixFader(bus, MixChannel::VirtualB), "Virtual B"),
@@ -364,8 +375,7 @@ fn stereo_meter_group(name: &'static str, parameter: fn(u8) -> FloatParameters) 
         name,
         visibility: ParameterGroupVisibility::Always,
         parameters: vec![
-            Parameter::Meter(parameter(0), "Left"),
-            Parameter::Meter(parameter(1), "Right"),
+            Parameter::Meter(vec![(parameter(0), None), (parameter(1), None)], "Output"),
         ],
     }
 }
@@ -548,6 +558,32 @@ mod tests {
                 |parameter| matches!(parameter, Parameter::Knob(actual, _) if *actual == expected)
             ));
         }
+    }
+
+    #[test]
+    fn assigns_control_units_and_meter_direction() {
+        for parameter in [
+            FloatParameters::Gain(0),
+            FloatParameters::ReverbSend(0),
+            FloatParameters::HeadphonesGain(),
+            FloatParameters::MixFader(0, MixChannel::Playback),
+        ] {
+            assert!(parameter.is_decibels());
+        }
+        assert!(!FloatParameters::MainGain().is_decibels());
+        assert!(FloatParameters::MainGain().is_percentage());
+        assert_eq!(FloatParameters::MainGain().spec().min, 0.0);
+        assert_eq!(FloatParameters::MainGain().spec().max, 1.0);
+
+        assert!(FloatParameters::Compressor(0).is_reduction_meter());
+        assert!(FloatParameters::Gate(0).is_reduction_meter());
+        assert!(FloatParameters::Limiter(0).is_reduction_meter());
+        assert!(!FloatParameters::ChannelLevel(0).is_reduction_meter());
+
+        assert_eq!(
+            FloatParameters::MixFader(0, MixChannel::Playback).spec().min,
+            -96.0
+        );
     }
 
     #[test]

@@ -1,0 +1,10 @@
+[package]
+name = "egui-audio-controls"
+version = "0.1.0"
+edition = "2024"
+description = "Audio-oriented egui meters, knobs, and faders"
+readme = "README.md"
+publish = false
+
+[dependencies]
+egui = "0.36.1"
