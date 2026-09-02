@@ -152,6 +152,12 @@ fn parameter_group(
                         if let Some(reset_value) = control.reset_value {
                             knob = knob.reset_value(reset_value);
                         }
+                        if let Some(step) = control.keyboard_step {
+                            knob = knob.keyboard_step(step);
+                        }
+                        if let Some(step) = control.fine_keyboard_step {
+                            knob = knob.fine_keyboard_step(step);
+                        }
                         knob = configure_knob_display(knob, control.display);
 
                         if ui.add(knob).changed() {
@@ -176,6 +182,12 @@ fn parameter_group(
                         }
                         if let Some(reset_value) = control.reset_value {
                             fader = fader.reset_value(reset_value);
+                        }
+                        if let Some(step) = control.keyboard_step {
+                            fader = fader.keyboard_step(step);
+                        }
+                        if let Some(step) = control.fine_keyboard_step {
+                            fader = fader.fine_keyboard_step(step);
                         }
                         fader = configure_fader_display(fader, control.display);
 

@@ -61,6 +61,18 @@ impl<'a> Fader<'a> {
         self
     }
 
+    /// Sets the value-domain increment used by arrow keys.
+    pub fn keyboard_step(mut self, step: f32) -> Self {
+        self.control.set_keyboard_step(step);
+        self
+    }
+
+    /// Sets the value-domain increment used by Shift+arrow keys.
+    pub fn fine_keyboard_step(mut self, step: f32) -> Self {
+        self.control.set_fine_keyboard_step(step);
+        self
+    }
+
     pub fn decimals(mut self, decimals: usize) -> Self {
         self.control.set_decimals(decimals);
         self
@@ -133,7 +145,8 @@ impl Widget for Fader<'_> {
             control.update_normalized_value(normalized, &mut response);
         }
 
-        control.handle_keyboard(ui, &mut response, fine);
+        let hovered = ui.rect_contains_pointer(rect);
+        control.handle_hover_input(ui, &mut response, hovered);
 
         let visuals = *ui.style().interact(&response);
         let painter = ui.painter_at(rect);
@@ -206,7 +219,7 @@ impl Widget for Fader<'_> {
 
         if response.hovered() {
             response = response.on_hover_text(
-                "Drag the fader. Hold Shift for fine control, or click the value to type.",
+                "Drag the fader, or hover and use the wheel or arrow keys. Hold Shift for fine control; click the value to type.",
             );
         }
         outer_response.union(response).union(value_response)

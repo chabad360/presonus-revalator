@@ -22,12 +22,18 @@ ui.add(
 # }
 ```
 
-The value shown above a knob or fader is editable. Prefixes, suffixes, custom formatting/parsing, and magnetic notches can be combined without assigning a unit-specific widget mode:
+The value shown above a knob or fader is editable. While the control is under the pointer, arrow keys and the mouse wheel adjust it without requiring focus. Prefixes, suffixes, custom formatting/parsing, magnetic notches, and value-domain increments can be combined without assigning a unit-specific widget mode. Arrow keys and wheel events use `keyboard_step`; holding Shift uses `fine_keyboard_step`:
 
 ```rust
 # use egui_audio_controls::Knob;
 # fn ui(ui: &mut egui::Ui, pan: &mut f32, volume: &mut f32) {
-ui.add(Knob::new(pan, 0.0..=1.0).notch(0.5).text("Pan"));
+ui.add(
+    Knob::new(pan, 0.0..=1.0)
+        .notch(0.5)
+        .keyboard_step(0.01)
+        .fine_keyboard_step(0.001)
+        .text("Pan"),
+);
 ui.add(
     Knob::new(volume, 0.0..=1.0)
         .suffix("%")

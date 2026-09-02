@@ -17,6 +17,8 @@ pub(crate) struct ControlValue<'a> {
     notches: Vec<f32>,
     notch_tolerance: f32,
     reset_value: Option<f32>,
+    keyboard_step: Option<f32>,
+    fine_keyboard_step: Option<f32>,
 }
 
 impl<'a> ControlValue<'a> {
@@ -33,6 +35,8 @@ impl<'a> ControlValue<'a> {
             notches: Vec::new(),
             notch_tolerance: 0.025,
             reset_value: None,
+            keyboard_step: None,
+            fine_keyboard_step: None,
         }
     }
 
@@ -95,6 +99,16 @@ impl<'a> ControlValue<'a> {
         self.reset_value = Some(value);
     }
 
+    pub(crate) fn set_keyboard_step(&mut self, step: f32) {
+        assert!(step.is_finite(), "keyboard step must be finite");
+        self.keyboard_step = Some(step.abs());
+    }
+
+    pub(crate) fn set_fine_keyboard_step(&mut self, step: f32) {
+        assert!(step.is_finite(), "fine keyboard step must be finite");
+        self.fine_keyboard_step = Some(step.abs());
+    }
+
     pub(crate) fn normalized_value(&self) -> f32 {
         self.scale.normalize(self.value(), &self.range)
     }
@@ -144,19 +158,77 @@ impl<'a> ControlValue<'a> {
         true
     }
 
-    pub(crate) fn handle_keyboard(&mut self, ui: &Ui, response: &mut Response, fine: bool) {
-        if !response.has_focus() {
+    fn keyboard_step_for(&self, fine: bool) -> f32 {
+        let range_width = *self.range.end() - *self.range.start();
+        let normal_step = self.keyboard_step.unwrap_or(range_width / 100.0);
+        if fine {
+            self.fine_keyboard_step.unwrap_or(normal_step / 10.0)
+        } else {
+            normal_step
+        }
+    }
+
+    fn step_value(&mut self, direction: i8, fine: bool) -> bool {
+        if direction == 0 {
+            return false;
+        }
+
+        let step = self.keyboard_step_for(fine);
+        let value = (self.value() + f32::from(direction) * step)
+            .clamp(*self.range.start(), *self.range.end());
+        if value == *self.value {
+            false
+        } else {
+            *self.value = value;
+            true
+        }
+    }
+
+    pub(crate) fn handle_hover_input(
+        &mut self,
+        ui: &mut Ui,
+        response: &mut Response,
+        hovered: bool,
+    ) {
+        if !hovered {
             return;
         }
 
-        let direction = ui.input(|input| {
+        let fine = ui.input(|input| input.modifiers.shift);
+        let key_direction = ui.input(|input| {
             i8::from(input.key_pressed(Key::ArrowUp) || input.key_pressed(Key::ArrowRight))
                 - i8::from(input.key_pressed(Key::ArrowDown) || input.key_pressed(Key::ArrowLeft))
         });
-        if direction != 0 {
-            let step = if fine { 0.001 } else { 0.01 };
-            let normalized = self.normalized_value() + f32::from(direction) * step;
-            self.set_normalized_value(normalized);
+        let scroll_direction = ui.input_mut(|input| {
+            let delta = input
+                .events
+                .iter()
+                .filter_map(|event| match event {
+                    egui::Event::MouseWheel { delta, .. } => Some(*delta),
+                    _ => None,
+                })
+                .fold(egui::Vec2::ZERO, |total, delta| total + delta);
+
+            // Consume both the immediate delta and egui's derived smoothing so
+            // the value changes exactly when wheel events arrive, rather than
+            // continuing to tween over later frames.
+            input.smooth_scroll_delta = egui::Vec2::ZERO;
+
+            let dominant_delta = if delta.y.abs() >= delta.x.abs() {
+                delta.y
+            } else {
+                delta.x
+            };
+            if dominant_delta > 0.0 {
+                1
+            } else if dominant_delta < 0.0 {
+                -1
+            } else {
+                0
+            }
+        });
+
+        if self.step_value(key_direction + scroll_direction, fine) {
             response.mark_changed();
         }
     }
@@ -199,6 +271,31 @@ impl<'a> ControlValue<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyboard_steps_are_value_based_and_shift_uses_fine_step() {
+        let mut value = 0.0;
+        let mut control = ControlValue::new(&mut value, -96.0..=10.0);
+
+        assert!((control.keyboard_step_for(false) - 1.06).abs() < f32::EPSILON);
+        assert!((control.keyboard_step_for(true) - 0.106).abs() < f32::EPSILON);
+
+        control.set_keyboard_step(0.5);
+        control.set_fine_keyboard_step(0.05);
+        assert_eq!(control.keyboard_step_for(false), 0.5);
+        assert_eq!(control.keyboard_step_for(true), 0.05);
+    }
+
+    #[test]
+    fn keyboard_steps_escape_magnetic_notches() {
+        let mut value = 0.5;
+        let mut control = ControlValue::new(&mut value, 0.0..=1.0);
+        control.add_notch(0.5);
+        control.set_keyboard_step(0.01);
+
+        assert!(control.step_value(1, false));
+        assert_eq!(control.value(), 0.51);
+    }
 
     #[test]
     fn normalized_updates_snap_to_nearby_notches() {

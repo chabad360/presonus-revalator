@@ -50,6 +50,18 @@ impl<'a> Knob<'a> {
         self
     }
 
+    /// Sets the value-domain increment used by arrow keys.
+    pub fn keyboard_step(mut self, step: f32) -> Self {
+        self.control.set_keyboard_step(step);
+        self
+    }
+
+    /// Sets the value-domain increment used by Shift+arrow keys.
+    pub fn fine_keyboard_step(mut self, step: f32) -> Self {
+        self.control.set_fine_keyboard_step(step);
+        self
+    }
+
     pub fn decimals(mut self, decimals: usize) -> Self {
         self.control.set_decimals(decimals);
         self
@@ -126,7 +138,8 @@ impl Widget for Knob<'_> {
         }
 
         control.reset_on_double_click(&mut response);
-        control.handle_keyboard(ui, &mut response, fine);
+        let hovered = ui.rect_contains_pointer(rect);
+        control.handle_hover_input(ui, &mut response, hovered);
 
         let visuals = *ui.style().interact(&response);
         let painter = ui.painter_at(rect);
@@ -200,7 +213,7 @@ impl Widget for Knob<'_> {
 
         if response.hovered() {
             response = response
-                .on_hover_text("Drag vertically or horizontally. Hold Shift for fine control.");
+                .on_hover_text("Drag vertically or horizontally. Hover and use the wheel or arrow keys; hold Shift for fine control.");
         }
         outer_response.union(response).union(value_response)
     }

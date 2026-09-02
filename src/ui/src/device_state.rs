@@ -243,6 +243,8 @@ pub struct KnobParameter {
     pub display: ValueDisplay,
     pub notches: Vec<f32>,
     pub reset_value: Option<f32>,
+    pub keyboard_step: Option<f32>,
+    pub fine_keyboard_step: Option<f32>,
 }
 
 impl KnobParameter {
@@ -254,6 +256,8 @@ impl KnobParameter {
             display: ValueDisplay::default(),
             notches: Vec::new(),
             reset_value: None,
+            keyboard_step: None,
+            fine_keyboard_step: None,
         }
     }
 
@@ -263,16 +267,26 @@ impl KnobParameter {
             suffix: " dB",
             decimals: 1,
         };
+        self.keyboard_step = Some(0.5);
+        self.fine_keyboard_step = Some(0.1);
         self
     }
 
     fn percentage(mut self) -> Self {
         self.display = ValueDisplay::Percentage { decimals: 0 };
+        self.keyboard_step = Some(0.01);
+        self.fine_keyboard_step = Some(0.001);
         self
     }
 
     fn notch(mut self, value: f32) -> Self {
         self.notches.push(value);
+        self
+    }
+
+    fn keyboard_steps(mut self, step: f32, fine_step: f32) -> Self {
+        self.keyboard_step = Some(step);
+        self.fine_keyboard_step = Some(fine_step);
         self
     }
 }
@@ -285,6 +299,8 @@ pub struct FaderParameter {
     pub decibel_taper: bool,
     pub notches: Vec<f32>,
     pub reset_value: Option<f32>,
+    pub keyboard_step: Option<f32>,
+    pub fine_keyboard_step: Option<f32>,
 }
 
 impl FaderParameter {
@@ -300,6 +316,8 @@ impl FaderParameter {
             decibel_taper: true,
             notches: vec![0.0],
             reset_value: Some(0.0),
+            keyboard_step: Some(0.5),
+            fine_keyboard_step: Some(0.1),
         }
     }
 }
@@ -392,7 +410,7 @@ pub fn device_model() -> DeviceModel {
                         KnobParameter::new(FloatParameters::Gain(0), "Gain").decibels(),
                     ),
                     Parameter::Knob(
-                        KnobParameter::new(FloatParameters::Pan(0), "Pan (L–C–R)").notch(0.5),
+                        KnobParameter::new(FloatParameters::Pan(0), "Pan (L–C–R)").notch(0.5).keyboard_steps(0.01, 0.001),
                     ),
                     Parameter::Fader(FaderParameter::decibels(
                         FloatParameters::ReverbSend(0),
@@ -433,7 +451,7 @@ pub fn device_model() -> DeviceModel {
                         KnobParameter::new(FloatParameters::Gain(1), "Gain").decibels(),
                     ),
                     Parameter::Knob(
-                        KnobParameter::new(FloatParameters::Pan(1), "Pan (L–C–R)").notch(0.5),
+                        KnobParameter::new(FloatParameters::Pan(1), "Pan (L–C–R)").notch(0.5).keyboard_steps(0.01, 0.001),
                     ),
                     Parameter::Fader(FaderParameter::decibels(
                         FloatParameters::ReverbSend(1),
@@ -478,10 +496,10 @@ pub fn device_model() -> DeviceModel {
                         KnobParameter::new(FloatParameters::Gain(1), "Gain 2").decibels(),
                     ),
                     Parameter::Knob(
-                        KnobParameter::new(FloatParameters::Pan(0), "Pan 1 (L–C–R)").notch(0.5),
+                        KnobParameter::new(FloatParameters::Pan(0), "Pan 1 (L–C–R)").notch(0.5).keyboard_steps(0.01, 0.001),
                     ),
                     Parameter::Knob(
-                        KnobParameter::new(FloatParameters::Pan(1), "Pan 2 (L–C–R)").notch(0.5),
+                        KnobParameter::new(FloatParameters::Pan(1), "Pan 2 (L–C–R)").notch(0.5).keyboard_steps(0.01, 0.001),
                     ),
                     Parameter::Fader(FaderParameter::decibels(
                         FloatParameters::ReverbSend(0),
@@ -554,7 +572,7 @@ pub fn device_model() -> DeviceModel {
                             .percentage(),
                     ),
                     Parameter::Knob(
-                        KnobParameter::new(FloatParameters::MonitorMix(), "Blend").notch(0.0),
+                        KnobParameter::new(FloatParameters::MonitorMix(), "Blend").notch(0.0).keyboard_steps(0.01, 0.001),
                     ),
                     Parameter::Choice(ChoiceParameters::MonitorSource(), "Source", MONITOR_SOURCES),
                 ],
@@ -1000,7 +1018,7 @@ mod tests {
         });
         assert!(matches!(
             compressor.map(|spec| (spec.input, spec.inverted)),
-            Some((MeterInput::Decibels, true))
+            Some((MeterInput::LinearAmplitude, true))
         ));
 
         assert_eq!(
