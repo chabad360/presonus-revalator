@@ -121,6 +121,10 @@ impl Widget for Knob<'_> {
         let center = Pos2::new(rect.center().x, rect.top() + diameter * 0.5 + 4.0);
         let radius = diameter * 0.5;
         let dial_rect = Rect::from_center_size(center, Vec2::splat(diameter + 12.0));
+        let value_rect = Rect::from_min_max(
+            Pos2::new(rect.left(), center.y + radius + 4.0),
+            Pos2::new(rect.right(), center.y + radius + 4.0 + value_height),
+        );
         let mut response = ui.interact(
             dial_rect,
             outer_response.id.with("dial"),
@@ -130,14 +134,15 @@ impl Widget for Knob<'_> {
         control.focus_on_click(&response);
 
         let fine = ui.input(|input| input.modifiers.shift);
-        if response.dragged() {
+        if control.reset_on_double_click(ui, rect, value_rect, &mut response) {
+            // Reset takes precedence over drag handling.
+        } else if response.dragged() {
             let delta = ui.input(|input| input.pointer.delta());
             let sensitivity = if fine { 800.0 } else { 200.0 };
             let normalized = control.normalized_value() + (delta.x - delta.y) / sensitivity;
             control.update_normalized_value(normalized, &mut response);
         }
 
-        control.reset_on_double_click(&mut response);
         let hovered = ui.rect_contains_pointer(rect);
         control.handle_hover_input(ui, &mut response, hovered);
 
@@ -190,10 +195,6 @@ impl Widget for Knob<'_> {
             );
         }
 
-        let value_rect = Rect::from_min_max(
-            Pos2::new(rect.left(), center.y + radius + 4.0),
-            Pos2::new(rect.right(), center.y + radius + 4.0 + value_height),
-        );
         let value_response = control.add_editable(
             ui,
             outer_response.id.with("value"),

@@ -141,9 +141,23 @@ impl<'a> ControlValue<'a> {
         }
     }
 
-    /// Returns whether the double click was handled, so callers can suppress drag handling.
-    pub(crate) fn reset_on_double_click(&mut self, response: &mut Response) -> bool {
-        if !response.double_clicked() {
+    /// Returns whether a double click outside `excluded_rect` was handled.
+    pub(crate) fn reset_on_double_click(
+        &mut self,
+        ui: &Ui,
+        widget_rect: Rect,
+        excluded_rect: Rect,
+        response: &mut Response,
+    ) -> bool {
+        let double_clicked = ui.input(|input| {
+            input
+                .pointer
+                .button_double_clicked(egui::PointerButton::Primary)
+                && input.pointer.interact_pos().is_some_and(|position| {
+                    widget_rect.contains(position) && !excluded_rect.contains(position)
+                })
+        });
+        if !double_clicked {
             return false;
         }
         let Some(reset_value) = self.reset_value else {

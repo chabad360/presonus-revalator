@@ -118,27 +118,41 @@ impl Widget for Fader<'_> {
         let (rect, outer_response) = ui.allocate_exact_size(size, Sense::hover());
         let label_height = if text.is_some() { 20.0 } else { 4.0 };
         let value_height = 20.0;
+        let value_rect = Rect::from_center_size(
+            Pos2::new(rect.center().x, rect.top() + value_height * 0.5),
+            Vec2::new(76.0, value_height),
+        );
         let track = Rect::from_min_max(
             Pos2::new(rect.left() + 22.0, rect.top() + value_height + 8.0),
             Pos2::new(rect.left() + 28.0, rect.bottom() - label_height),
         );
-        let mut response = ui.interact(
-            track.expand2(Vec2::new(18.0, 7.0)),
+        let initial_thumb_y = egui::lerp(track.bottom()..=track.top(), control.normalized_value());
+        let initial_thumb = Rect::from_center_size(
+            Pos2::new(track.center().x, initial_thumb_y),
+            Vec2::new(28.0, 18.0),
+        );
+        let track_response = ui.interact(
+            track,
             outer_response.id.with("track"),
             Sense::click_and_drag(),
         );
+        let thumb_response = ui.interact(
+            initial_thumb,
+            outer_response.id.with("thumb"),
+            Sense::click_and_drag(),
+        );
+        let mut response = track_response.union(thumb_response.clone());
 
         control.focus_on_click(&response);
         let fine = ui.input(|input| input.modifiers.shift);
-        if control.reset_on_double_click(&mut response) {
-            // A configured reset takes precedence over either drag mode.
-        } else if fine {
-            if response.dragged() {
-                let delta = ui.input(|input| input.pointer.delta());
-                let normalized = control.normalized_value() - delta.y / 800.0;
-                control.update_normalized_value(normalized, &mut response);
-            }
-        } else if (response.dragged() || response.clicked())
+        let dragging = track_response.dragged() || thumb_response.dragged();
+        if control.reset_on_double_click(ui, rect, value_rect, &mut response) {
+            // Reset takes precedence over either drag mode.
+        } else if fine && dragging {
+            let delta = ui.input(|input| input.pointer.delta());
+            let normalized = control.normalized_value() - delta.y / 800.0;
+            control.update_normalized_value(normalized, &mut response);
+        } else if (track_response.clicked() || track_response.dragged() || thumb_response.dragged())
             && let Some(pointer) = response.interact_pointer_pos()
         {
             let normalized = egui::remap_clamp(pointer.y, track.bottom()..=track.top(), 0.0..=1.0);
@@ -196,10 +210,6 @@ impl Widget for Fader<'_> {
             );
         }
 
-        let value_rect = Rect::from_center_size(
-            Pos2::new(rect.center().x, rect.top() + value_height * 0.5),
-            Vec2::new(76.0, value_height),
-        );
         let value_response = control.add_editable(
             ui,
             outer_response.id.with("value"),

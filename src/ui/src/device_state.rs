@@ -255,7 +255,7 @@ impl KnobParameter {
             scale: ValueScale::Linear,
             display: ValueDisplay::default(),
             notches: Vec::new(),
-            reset_value: None,
+            reset_value: Some(0.0),
             keyboard_step: None,
             fine_keyboard_step: None,
         }
@@ -281,6 +281,11 @@ impl KnobParameter {
 
     fn notch(mut self, value: f32) -> Self {
         self.notches.push(value);
+        self
+    }
+
+    fn reset_value(mut self, value: f32) -> Self {
+        self.reset_value = Some(value);
         self
     }
 
@@ -410,7 +415,7 @@ pub fn device_model() -> DeviceModel {
                         KnobParameter::new(FloatParameters::Gain(0), "Gain").decibels(),
                     ),
                     Parameter::Knob(
-                        KnobParameter::new(FloatParameters::Pan(0), "Pan (L–C–R)").notch(0.5).keyboard_steps(0.01, 0.001),
+                        KnobParameter::new(FloatParameters::Pan(0), "Pan (L–C–R)").notch(0.5).reset_value(0.5).keyboard_steps(0.01, 0.001),
                     ),
                     Parameter::Fader(FaderParameter::decibels(
                         FloatParameters::ReverbSend(0),
@@ -451,7 +456,7 @@ pub fn device_model() -> DeviceModel {
                         KnobParameter::new(FloatParameters::Gain(1), "Gain").decibels(),
                     ),
                     Parameter::Knob(
-                        KnobParameter::new(FloatParameters::Pan(1), "Pan (L–C–R)").notch(0.5).keyboard_steps(0.01, 0.001),
+                        KnobParameter::new(FloatParameters::Pan(1), "Pan (L–C–R)").notch(0.5).reset_value(0.5).keyboard_steps(0.01, 0.001),
                     ),
                     Parameter::Fader(FaderParameter::decibels(
                         FloatParameters::ReverbSend(1),
@@ -496,10 +501,10 @@ pub fn device_model() -> DeviceModel {
                         KnobParameter::new(FloatParameters::Gain(1), "Gain 2").decibels(),
                     ),
                     Parameter::Knob(
-                        KnobParameter::new(FloatParameters::Pan(0), "Pan 1 (L–C–R)").notch(0.5).keyboard_steps(0.01, 0.001),
+                        KnobParameter::new(FloatParameters::Pan(0), "Pan 1 (L–C–R)").notch(0.5).reset_value(0.5).keyboard_steps(0.01, 0.001),
                     ),
                     Parameter::Knob(
-                        KnobParameter::new(FloatParameters::Pan(1), "Pan 2 (L–C–R)").notch(0.5).keyboard_steps(0.01, 0.001),
+                        KnobParameter::new(FloatParameters::Pan(1), "Pan 2 (L–C–R)").notch(0.5).reset_value(0.5).keyboard_steps(0.01, 0.001),
                     ),
                     Parameter::Fader(FaderParameter::decibels(
                         FloatParameters::ReverbSend(0),
